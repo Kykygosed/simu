@@ -1,0 +1,124 @@
+/*
+  instruments.css
+  ---------------
+  Style commun à tous les écrans instruments (PFD, ND, ECAM, MCDU).
+  Esthétique "glass cockpit" générique et neutre : fond noir, texte
+  monospace, couleurs conventionnelles (vert=normal, ambre=attention,
+  rouge=alerte, cyan=cible/managed, blanc=valeur brute). Aucune référence
+  visuelle à un avion réel précis : ce sont les conventions de lisibilité
+  communes à la quasi-totalité des cockpits modernes.
+*/
+
+:root {
+  --scr-bg: #000000;
+  --scr-frame: #1a1a1a;
+  --scr-green: #1fdc4a;
+  --scr-white: #e8e8e8;
+  --scr-cyan: #35d1e0;
+  --scr-amber: #e8a723;
+  --scr-red: #e0392f;
+  --scr-dim: #4a4a4a;
+  --scr-label: #8a8a8a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--scr-frame);
+  color: var(--scr-white);
+  font-family: "Consolas", "DejaVu Sans Mono", "Courier New", monospace;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.screen {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  background: var(--scr-bg);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.screen-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--scr-label);
+  border-bottom: 1px solid var(--scr-dim);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+}
+
+.screen-header .status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--scr-red);
+}
+
+.screen-header .status-dot.connected {
+  background: var(--scr-green);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  flex: 1;
+}
+
+.field {
+  border: 1px solid var(--scr-dim);
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.field .label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--scr-label);
+  margin-bottom: 4px;
+}
+
+.field .value {
+  font-size: 30px;
+  font-weight: bold;
+  color: var(--scr-green);
+  line-height: 1;
+}
+
+.field .value.cyan {
+  color: var(--scr-cyan);
+}
+
+.field .value.amber {
+  color: var(--scr-amber);
+}
+
+.field .unit {
+  font-size: 13px;
+  color: var(--scr-label);
+  margin-left: 4px;
+  font-weight: normal;
+}
+
+.placeholder-note {
+  margin-top: auto;
+  font-size: 11px;
+  color: var(--scr-dim);
+  border-top: 1px dashed var(--scr-dim);
+  padding-top: 6px;
+}

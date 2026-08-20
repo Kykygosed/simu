@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>UPPER ECAM</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="css/instruments.css" />
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body>
+  <div class="screen">
+    <div class="screen-header">
+      <span><span id="statusDot" class="status-dot"></span>UPPER ECAM (SYST. — TEST)</span>
+      <span id="clock"></span>
+    </div>
+
+    <div class="field-grid">
+      <div class="field">
+        <div class="label">MOTEUR 1 — POUSSÉE</div>
+        <div class="value" id="valEng1">---<span class="unit">%</span></div>
+      </div>
+      <div class="field">
+        <div class="label">MOTEUR 2 — POUSSÉE</div>
+        <div class="value" id="valEng2">---<span class="unit">%</span></div>
+      </div>
+      <div class="field">
+        <div class="label">TENSION ÉLECTRIQUE</div>
+        <div class="value cyan" id="valVolt">---<span class="unit">V</span></div>
+      </div>
+      <div class="field">
+        <div class="label">PRESSION HYDRAULIQUE</div>
+        <div class="value amber" id="valHyd">---<span class="unit">psi</span></div>
+      </div>
+    </div>
+
+    <div class="placeholder-note">
+      Valeurs système de test — pages moteur/pressurisation/etc. à définir plus tard,
+      selon les systèmes réels de l'avion fictif.
+    </div>
+  </div>
+
+  <script src="js/firebase-config.js"></script>
+  <script>
+    const fmt = (v, d = 0) => (typeof v === "number" ? v.toFixed(d) : "---");
+
+    SimIO.watch("engines/engine1/thrust", (v) => {
+      document.getElementById("valEng1").innerHTML = `${fmt(v, 0)}<span class="unit">%</span>`;
+    });
+    SimIO.watch("engines/engine2/thrust", (v) => {
+      document.getElementById("valEng2").innerHTML = `${fmt(v, 0)}<span class="unit">%</span>`;
+    });
+    SimIO.watch("systems/electrical/busVoltage", (v) => {
+      document.getElementById("valVolt").innerHTML = `${fmt(v, 1)}<span class="unit">V</span>`;
+    });
+    SimIO.watch("systems/hydraulics/pressurePsi", (v) => {
+      document.getElementById("valHyd").innerHTML = `${fmt(v, 0)}<span class="unit">psi</span>`;
+    });
+
+    database.ref(".info/connected").on("value", (snap) => {
+      document.getElementById("statusDot").classList.toggle("connected", !!snap.val());
+    });
+
+    function tickClock() {
+      document.getElementById("clock").textContent = new Date().toLocaleTimeString("fr-FR");
+      setTimeout(tickClock, 1000);
+    }
+    tickClock();
+  </script>
+</body>
+</html>

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>MCDU</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="css/instruments.css" />
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <style>
+    .mcdu-screen {
+      background: #000;
+      border: 1px solid var(--scr-dim);
+      border-radius: 4px;
+      padding: 10px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+    .mcdu-line { display: flex; justify-content: space-between; }
+    .mcdu-line .l { color: var(--scr-cyan); }
+    .mcdu-line .r { color: var(--scr-green); }
+    #scratchpad {
+      margin-top: auto;
+      border-top: 1px solid var(--scr-dim);
+      padding-top: 6px;
+      color: var(--scr-amber);
+      min-height: 22px;
+      word-break: break-all;
+    }
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .keypad button {
+      background: #111;
+      color: var(--scr-white);
+      border: 1px solid var(--scr-dim);
+      border-radius: 4px;
+      padding: 10px 0;
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .keypad button:active { background: #222; }
+    .keypad button.wide { grid-column: span 2; }
+  </style>
+</head>
+<body>
+  <div class="screen">
+    <div class="screen-header">
+      <span><span id="statusDot" class="status-dot"></span>MCDU</span>
+      <span id="clock"></span>
+    </div>
+
+    <div class="mcdu-screen">
+      <div class="mcdu-line"><span class="l">ROUTE ACTIVE</span><span class="r" id="mcduRoute">AUCUNE</span></div>
+      <div class="mcdu-line"><span class="l">LAT / LON</span><span class="r" id="mcduPos">---</span></div>
+      <div class="mcdu-line"><span class="l">STATUT FIREBASE</span><span class="r" id="mcduStatus">---</span></div>
+      <div id="scratchpad"></div>
+    </div>
+
+    <div class="keypad">
+      <button onclick="typeChar('1')">1</button>
+      <button onclick="typeChar('2')">2</button>
+      <button onclick="typeChar('3')">3</button>
+      <button onclick="typeChar('4')">4</button>
+      <button onclick="typeChar('5')">5</button>
+      <button onclick="typeChar('6')">6</button>
+      <button onclick="typeChar('7')">7</button>
+      <button onclick="typeChar('8')">8</button>
+      <button onclick="typeChar('9')">9</button>
+      <button onclick="typeChar('0')">0</button>
+      <button onclick="clearScratch()">CLR</button>
+      <button onclick="typeChar('/')">/</button>
+      <button onclick="typeChar('-')">-</button>
+      <button class="wide" onclick="sendRoute()">INSÉRER → ROUTE</button>
+    </div>
+
+    <div class="placeholder-note">
+      MCDU minimal — vérifie la lecture ET l'écriture Firebase. Pages de navigation,
+      waypoints, performances à ajouter progressivement.
+    </div>
+  </div>
+
+  <script src="js/firebase-config.js"></script>
+  <script>
+    const fmt = (v, d = 0) => (typeof v === "number" ? v.toFixed(d) : "---");
+    let scratch = "";
+
+    function renderScratch() {
+      document.getElementById("scratchpad").textContent = scratch || " ";
+    }
+
+    function typeChar(c) {
+      scratch += c;
+      renderScratch();
+    }
+
+    function clearScratch() {
+      scratch = scratch.slice(0, -1);
+      renderScratch();
+    }
+
+    // Écrit la valeur du scratchpad comme route active — preuve d'écriture Firebase.
+    function sendRoute() {
+      if (!scratch) return;
+      SimIO.set("navigation/activeRoute", scratch);
+      scratch = "";
+      renderScratch();
+    }
+
+    // Lecture Firebase — preuve de lecture.
+    SimIO.watch("navigation/activeRoute", (v) => {
+      document.getElementById("mcduRoute").textContent = v || "AUCUNE";
+    });
+
+    let lastLat = null;
+    let lastLon = null;
+    function refreshPos() {
+      if (lastLat !== null && lastLon !== null) {
+        document.getElementById("mcduPos").textContent = `${lastLat.toFixed(4)} / ${lastLon.toFixed(4)}`;
+      }
+    }
+    SimIO.watch("aircraft/position/latitude", (v) => { lastLat = v; refreshPos(); });
+    SimIO.watch("aircraft/position/longitude", (v) => { lastLon = v; refreshPos(); });
+
+    database.ref(".info/connected").on("value", (snap) => {
+      const connected = !!snap.val();
+      document.getElementById("statusDot").classList.toggle("connected", connected);
+      document.getElementById("mcduStatus").textContent = connected ? "CONNECTÉ" : "DÉCONNECTÉ";
+    });
+
+    renderScratch();
+
+    function tickClock() {
+      document.getElementById("clock").textContent = new Date().toLocaleTimeString("fr-FR");
+      setTimeout(tickClock, 1000);
+    }
+    tickClock();
+  </script>
+</body>
+</html>

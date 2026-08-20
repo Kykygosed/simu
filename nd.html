@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>ND</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="css/instruments.css" />
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <style>
+    .compass-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #compass {
+      width: min(60vh, 90%);
+      height: min(60vh, 90%);
+    }
+  </style>
+</head>
+<body>
+  <div class="screen">
+    <div class="screen-header">
+      <span><span id="statusDot" class="status-dot"></span>ND</span>
+      <span id="posText">--- , ---</span>
+    </div>
+
+    <div class="compass-wrap">
+      <svg id="compass" viewBox="0 0 200 200">
+        <circle cx="100" cy="100" r="95" fill="none" stroke="#4a4a4a" stroke-width="1" />
+        <g id="rose"></g>
+        <!-- Symbole avion fixe au centre (représentation de l'avion sur SA PROPRE nav display, pas dans Cesium) -->
+        <polygon points="100,88 106,110 100,105 94,110" fill="#1fdc4a" />
+        <text x="100" y="14" text-anchor="middle" fill="#e8e8e8" font-size="12" font-family="monospace">N</text>
+      </svg>
+    </div>
+
+    <div class="field-grid" style="grid-template-columns: 1fr 1fr;">
+      <div class="field">
+        <div class="label">CAP</div>
+        <div class="value" id="valHdg">---<span class="unit">°</span></div>
+      </div>
+      <div class="field">
+        <div class="label">ROUTE ACTIVE</div>
+        <div class="value cyan" id="valRoute">AUCUNE</div>
+      </div>
+    </div>
+
+    <div class="placeholder-note">
+      Architecture de test — route, waypoints, distance, terrain/météo à ajouter
+      progressivement une fois la navigation définie.
+    </div>
+  </div>
+
+  <script src="js/firebase-config.js"></script>
+  <script>
+    const fmt = (v, d = 0) => (typeof v === "number" ? v.toFixed(d) : "---");
+    const rose = document.getElementById("rose");
+
+    // Génère les graduations tous les 30° une seule fois.
+    for (let deg = 0; deg < 360; deg += 30) {
+      const rad = (deg * Math.PI) / 180;
+      const x1 = 100 + 90 * Math.sin(rad);
+      const y1 = 100 - 90 * Math.cos(rad);
+      const x2 = 100 + 80 * Math.sin(rad);
+      const y2 = 100 - 80 * Math.cos(rad);
+      const tick = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      tick.setAttribute("x1", x1);
+      tick.setAttribute("y1", y1);
+      tick.setAttribute("x2", x2);
+      tick.setAttribute("y2", y2);
+      tick.setAttribute("stroke", "#8a8a8a");
+      tick.setAttribute("stroke-width", "1.5");
+      rose.appendChild(tick);
+    }
+
+    SimIO.watch("aircraft/attitude/heading", (v) => {
+      document.getElementById("valHdg").innerHTML = `${fmt(v, 0)}<span class="unit">°</span>`;
+      // La rose tourne en sens inverse du cap (le nez reste fixe en haut de l'écran).
+      if (typeof v === "number") {
+        rose.setAttribute("transform", `rotate(${-v} 100 100)`);
+      }
+    });
+
+    SimIO.watch("aircraft/position/latitude", (lat) => refreshPos(lat, null));
+    SimIO.watch("aircraft/position/longitude", (lon) => refreshPos(null, lon));
+
+    let lastLat = null;
+    let lastLon = null;
+    function refreshPos(lat, lon) {
+      if (lat !== null) lastLat = lat;
+      if (lon !== null) lastLon = lon;
+      if (lastLat !== null && lastLon !== null) {
+        document.getElementById("posText").textContent = `${lastLat.toFixed(4)}, ${lastLon.toFixed(4)}`;
+      }
+    }
+
+    SimIO.watch("navigation/activeRoute", (v) => {
+      document.getElementById("valRoute").textContent = v || "AUCUNE";
+    });
+
+    database.ref(".info/connected").on("value", (snap) => {
+      document.getElementById("statusDot").classList.toggle("connected", !!snap.val());
+    });
+  </script>
+</body>
+</html>

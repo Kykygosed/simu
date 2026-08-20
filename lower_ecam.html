@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>LOWER ECAM</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="css/instruments.css" />
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body>
+  <div class="screen">
+    <div class="screen-header">
+      <span><span id="statusDot" class="status-dot"></span>LOWER ECAM (SYST. — TEST)</span>
+      <span id="clock"></span>
+    </div>
+
+    <div class="field-grid">
+      <div class="field">
+        <div class="label">CARBURANT RESTANT</div>
+        <div class="value" id="valFuel">---<span class="unit">kg</span></div>
+      </div>
+      <div class="field">
+        <div class="label">ACCÉLÉRATION</div>
+        <div class="value cyan" id="valAccel">---<span class="unit">m/s²</span></div>
+      </div>
+      <div class="field">
+        <div class="label">ALTITUDE</div>
+        <div class="value" id="valAlt">---<span class="unit">m</span></div>
+      </div>
+      <div class="field">
+        <div class="label">VITESSE VERTICALE</div>
+        <div class="value amber" id="valVs">---<span class="unit">m/s</span></div>
+      </div>
+    </div>
+
+    <div class="placeholder-note">
+      Valeurs système de test — pages carburant/pressurisation/portes/etc. à définir
+      progressivement.
+    </div>
+  </div>
+
+  <script src="js/firebase-config.js"></script>
+  <script>
+    const fmt = (v, d = 0) => (typeof v === "number" ? v.toFixed(d) : "---");
+
+    SimIO.watch("systems/fuel/quantityKg", (v) => {
+      document.getElementById("valFuel").innerHTML = `${fmt(v, 0)}<span class="unit">kg</span>`;
+    });
+    SimIO.watch("aircraft/flight/acceleration", (v) => {
+      document.getElementById("valAccel").innerHTML = `${fmt(v, 2)}<span class="unit">m/s²</span>`;
+    });
+    SimIO.watch("aircraft/position/altitude", (v) => {
+      document.getElementById("valAlt").innerHTML = `${fmt(v, 0)}<span class="unit">m</span>`;
+    });
+    SimIO.watch("aircraft/flight/verticalSpeed", (v) => {
+      document.getElementById("valVs").innerHTML = `${fmt(v, 1)}<span class="unit">m/s</span>`;
+    });
+
+    database.ref(".info/connected").on("value", (snap) => {
+      document.getElementById("statusDot").classList.toggle("connected", !!snap.val());
+    });
+
+    function tickClock() {
+      document.getElementById("clock").textContent = new Date().toLocaleTimeString("fr-FR");
+      setTimeout(tickClock, 1000);
+    }
+    tickClock();
+  </script>
+</body>
+</html>

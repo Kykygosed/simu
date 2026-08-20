@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>PFD</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="css/instruments.css" />
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body>
+  <div class="screen">
+    <div class="screen-header">
+      <span><span id="statusDot" class="status-dot"></span>PFD</span>
+      <span id="clock"></span>
+    </div>
+
+    <div class="field-grid">
+      <div class="field">
+        <div class="label">VITESSE (IAS)</div>
+        <div class="value" id="valSpeed">---<span class="unit">m/s</span></div>
+      </div>
+      <div class="field">
+        <div class="label">ALTITUDE</div>
+        <div class="value cyan" id="valAlt">---<span class="unit">m</span></div>
+      </div>
+      <div class="field">
+        <div class="label">CAP (HDG)</div>
+        <div class="value" id="valHdg">---<span class="unit">°</span></div>
+      </div>
+      <div class="field">
+        <div class="label">ASSIETTE (PITCH)</div>
+        <div class="value" id="valPitch">---<span class="unit">°</span></div>
+      </div>
+      <div class="field">
+        <div class="label">INCLINAISON (ROLL)</div>
+        <div class="value" id="valRoll">---<span class="unit">°</span></div>
+      </div>
+      <div class="field">
+        <div class="label">VITESSE VERTICALE (V/S)</div>
+        <div class="value amber" id="valVs">---<span class="unit">m/s</span></div>
+      </div>
+    </div>
+
+    <div class="placeholder-note">
+      Architecture de test — instruments (horizon artificiel, échelle de vitesse/altitude,
+      flight director...) à définir progressivement une fois l'avionique choisie.
+    </div>
+  </div>
+
+  <script src="js/firebase-config.js"></script>
+  <script>
+    /*
+      pfd.html NE CALCULE RIEN. Il se contente d'écouter Firebase et
+      d'afficher les valeurs telles quelles.
+    */
+    const fmt = (v, d = 0) => (typeof v === "number" ? v.toFixed(d) : "---");
+
+    SimIO.watch("aircraft/flight/airspeed", (v) => {
+      document.getElementById("valSpeed").innerHTML = `${fmt(v, 1)}<span class="unit">m/s</span>`;
+    });
+    SimIO.watch("aircraft/position/altitude", (v) => {
+      document.getElementById("valAlt").innerHTML = `${fmt(v, 0)}<span class="unit">m</span>`;
+    });
+    SimIO.watch("aircraft/attitude/heading", (v) => {
+      document.getElementById("valHdg").innerHTML = `${fmt(v, 0)}<span class="unit">°</span>`;
+    });
+    SimIO.watch("aircraft/attitude/pitch", (v) => {
+      document.getElementById("valPitch").innerHTML = `${fmt(v, 1)}<span class="unit">°</span>`;
+    });
+    SimIO.watch("aircraft/attitude/roll", (v) => {
+      document.getElementById("valRoll").innerHTML = `${fmt(v, 1)}<span class="unit">°</span>`;
+    });
+    SimIO.watch("aircraft/flight/verticalSpeed", (v) => {
+      document.getElementById("valVs").innerHTML = `${fmt(v, 1)}<span class="unit">m/s</span>`;
+    });
+
+    database.ref(".info/connected").on("value", (snap) => {
+      document.getElementById("statusDot").classList.toggle("connected", !!snap.val());
+    });
+
+    function tickClock() {
+      document.getElementById("clock").textContent = new Date().toLocaleTimeString("fr-FR");
+      setTimeout(tickClock, 1000);
+    }
+    tickClock();
+  </script>
+</body>
+</html>

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simulateur — Vue extérieure</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link
+    href="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Widgets/widgets.css"
+    rel="stylesheet"
+  />
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+  <style>
+    html, body, #cesiumContainer {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    /*
+      Aucun HUD, aucun instrument superposé ici volontairement.
+      Ce petit badge en bas à gauche n'est qu'un indicateur technique
+      de connexion Firebase pour le développement — pas une info de vol.
+    */
+    #devStatus {
+      position: absolute;
+      left: 8px;
+      bottom: 8px;
+      font: 11px monospace;
+      color: #6a6a6a;
+      background: rgba(0,0,0,0.4);
+      padding: 3px 6px;
+      border-radius: 3px;
+      z-index: 10;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="devStatus">sim: init…</div>
+
+  <script src="js/firebase-config.js"></script>
+  <script src="js/flight-physics.js"></script>
+  <script src="js/controls.js"></script>
+
+  <script>
+    /*
+      =====================================================================
+      index.html joue ici DEUX rôles :
+        1) Vue extérieure Cesium (point de vue du pilote depuis le cockpit)
+        2) Hôte du moteur de simulation (la classe FlightModel + la lecture
+           clavier), qui écrit l'état de l'avion dans Firebase.
+
+      C'est un choix pour cette première version : index.html est la page
+      qu'on garde nécessairement ouverte (c'est la vue principale), donc
+      c'est un endroit naturel pour faire vivre la boucle de simulation.
+
+      Si tu préfères un moteur totalement indépendant des écrans (par
+      exemple pour pouvoir fermer la vue Cesium sans arrêter le vol), on
+      pourra facilement extraire ce bloc dans une page dédiée
+      (ex: sim-engine.html) ouverte dans une fenêtre cachée. Dis-le moi
+      quand tu voudras faire ce changement.
+      =====================================================================
+    */
+
+    Cesium.Ion.defaultAccessToken =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4N2QzNDMyNy0yN2I5LTRjYTQtYWY4Ny0wMTJiYzMxMTg0NWUiLCJpZCI6MjExODk3LCJpYXQiOjE3NDkzODM4NjJ9.-gzSpbdgPagQUWw9PxgljLi-hQtVaohFj185K2XqvFs";
+
+    const viewer = new Cesium.Viewer("cesiumContainer", {
+      terrainProvider: Cesium.createWorldTerrain
+        ? Cesium.createWorldTerrain()
+        : undefined,
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      fullscreenButton: false,
+      infoBox: false,
+      selectionIndicator: false
+    });
+
+    // Pas de HUD, pas de crédit inutile à l'écran, pas de sélection de terrain à la souris.
+    viewer.scene.screenSpaceCameraController.enableInputs = false; // la caméra suit uniquement l'état de vol
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+
+    // ------------------------------------------------------------------
+    // Point de spawn : 19000 ft au-dessus de Paris.
+    // ------------------------------------------------------------------
+    const START_LAT = 48.8566;
+    const START_LON = 2.3522;
+    const START_ALT_M = 19000 * 0.3048; // 19000 ft -> mètres
+
+    const flightModel = new FlightModel({
+      latitude: START_LAT,
+      longitude: START_LON,
+      altitude: START_ALT_M,
+      heading: 90, // cap initial : vers l'est, arbitraire
+      pitch: 0,
+      roll: 0,
+      airspeed: 220
+    });
+
+    KeyboardControls.init();
+
+    // ------------------------------------------------------------------
+    // Boucle de simulation : calcule l'état, l'écrit dans Firebase,
+    // et positionne la caméra Cesium en conséquence (point de vue cockpit).
+    // ------------------------------------------------------------------
+    let lastTime = performance.now();
+
+    function simulationTick() {
+      const now = performance.now();
+      const dt = Math.min(0.1, (now - lastTime) / 1000); // clamp pour éviter les gros sauts (tab en arrière-plan etc.)
+      lastTime = now;
+
+      const controls = KeyboardControls.read(dt);
+      const state = flightModel.update(dt, controls);
+
+      // Écriture groupée dans Firebase — un seul update() pour limiter les écritures.
+      SimIO.update({
+        "aircraft/position/latitude": state.latitude,
+        "aircraft/position/longitude": state.longitude,
+        "aircraft/position/altitude": state.altitude,
+        "aircraft/attitude/heading": state.heading,
+        "aircraft/attitude/pitch": state.pitch,
+        "aircraft/attitude/roll": state.roll,
+        "aircraft/flight/airspeed": state.airspeed,
+        "aircraft/flight/verticalSpeed": state.verticalSpeed,
+        "aircraft/flight/acceleration": state.acceleration,
+        "controls/pitch": controls.pitch,
+        "controls/roll": controls.roll,
+        "controls/yaw": controls.yaw,
+        "controls/throttle": controls.throttle,
+        "engines/engine1/thrust": state.engine1Thrust,
+        "engines/engine2/thrust": state.engine2Thrust,
+        // Quelques valeurs "systèmes" de test pour que l'ECAM ait de quoi afficher.
+        "systems/electrical/busVoltage": 27.5 + (state.engine1Thrust / 100) * 1.5,
+        "systems/fuel/quantityKg": Math.max(0, 8000 - now / 5000),
+        "systems/hydraulics/pressurePsi": 2800 + (state.engine1Thrust / 100) * 200
+      });
+
+      updateCamera(state);
+
+      requestAnimationFrame(simulationTick);
+    }
+
+    function updateCamera(state) {
+      const position = Cesium.Cartesian3.fromDegrees(
+        state.longitude,
+        state.latitude,
+        state.altitude
+      );
+
+      viewer.camera.setView({
+        destination: position,
+        orientation: {
+          heading: Cesium.Math.toRadians(state.heading),
+          pitch: Cesium.Math.toRadians(state.pitch),
+          roll: Cesium.Math.toRadians(state.roll)
+        }
+      });
+    }
+
+    // Petit indicateur dev (pas un instrument de vol) confirmant la connexion Firebase.
+    database.ref(".info/connected").on("value", (snap) => {
+      const el = document.getElementById("devStatus");
+      el.textContent = snap.val() ? "sim: firebase connecté" : "sim: firebase déconnecté";
+    });
+
+    requestAnimationFrame(simulationTick);
+  </script>
+</body>
+</html>
