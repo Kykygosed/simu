@@ -329,7 +329,7 @@ async function fetchDirection(direction){
   const from = isoLocal(now);
   const to = isoLocal(later);
   const url = `https://aerodatabox.p.rapidapi.com/flights/airports/icao/${ICAO}/${from}/${to}`
-    + `?withLeg=true&direction=${direction}&withCancelled=true&withCodeshared=true&withCargo=false&withPrivate=false&withLocation=false`;
+    + `?withLeg=true&direction=${direction}&withCancelled=true&withCodeshared=false&withCargo=false&withPrivate=false&withLocation=false`;
 
   const res = await fetch(url, {
     headers:{
@@ -343,6 +343,18 @@ async function fetchDirection(direction){
   return res.json();
 }
 
+function dedupeByNumber(flights){
+  const seen = new Set();
+  const out = [];
+  for(const f of flights){
+    const key = f.number || f.callSign;
+    if(key && seen.has(key)) continue;
+    if(key) seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
 async function loadRealData(){
   apiStatusEl.textContent = 'Connexion à AeroDataBox…';
   apiStatusEl.className = 'status';
@@ -352,8 +364,8 @@ async function loadRealData(){
       fetchDirection('Arrival')
     ]);
 
-    const departures = (depData.departures || []).slice(0, 14);
-    const arrivals = (arrData.arrivals || []).slice(0, 14);
+    const departures = dedupeByNumber(depData.departures || []).slice(0, 14);
+    const arrivals = dedupeByNumber(arrData.arrivals || []).slice(0, 14);
 
     if(departures.length === 0){
       renderEmpty(depBody, 'Aucun départ trouvé sur la période.');
