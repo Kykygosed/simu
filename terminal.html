@@ -2,7 +2,8 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>CDG · Tableau des vols</title>
+<title>LFRS · Tableau des vols &amp; radar</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
   @import url('https://cdnjs.cloudflare.com/ajax/libs/font-logos/1.2.0/font-logos.min.css');
 
@@ -19,6 +20,7 @@
     --row-delay:#3a0f14;
     --text-dim:#7fa0c9;
     --white:#f4f7fb;
+    --cyan:#5be3ff;
   }
   *{box-sizing:border-box;}
   html,body{
@@ -66,6 +68,20 @@
   .config .status.ok{color:#5be08a;}
   .config .status.err{color:#ff6b6b;}
   .config a{color:var(--yellow);}
+
+  /* ---- View toggle indicator ---- */
+  .viewSwitch{
+    display:flex;align-items:center;gap:10px;justify-content:center;
+    margin-bottom:14px;font-size:11px;letter-spacing:1.5px;color:var(--text-dim);
+    text-transform:uppercase;font-weight:700;
+  }
+  .viewSwitch .dot{width:8px;height:8px;border-radius:50%;background:#24456f;transition:background .3s;}
+  .viewSwitch .dot.active{background:var(--yellow);}
+  .viewSwitch .lbl{padding:3px 10px;border-radius:20px;transition:.3s;}
+  .viewSwitch .lbl.active{color:#101a2b;background:var(--yellow);}
+
+  .viewpane{transition:opacity .4s ease;}
+  .viewpane.hidden{display:none;}
 
   /* ---- Boards grid: 2 panels side by side ---- */
   .boards{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
@@ -146,14 +162,41 @@
 
   .footer-note{margin-top:14px;font-size:10.5px;color:#3f5a80;text-align:center;letter-spacing:.5px;}
 
-  ::selection{background:var(--yellow);color:#101a2b;}
+  /* ---- Radar panel ---- */
+  .radarPanel{
+    background:linear-gradient(180deg,var(--board-bg-1),var(--board-bg-2));
+    border:1px solid var(--panel-line);border-radius:6px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(0,0,0,.5), inset 0 0 60px rgba(0,40,90,.15);
+  }
+  #radarMap{height:680px;width:100%;background:#03070f;}
+  .leaflet-container{background:#03070f;font-family:'Bahnschrift','Segoe UI',Arial,sans-serif;}
+  .leaflet-control-attribution{background:rgba(5,13,28,.75) !important;color:var(--text-dim) !important;font-size:9px !important;}
+  .leaflet-control-attribution a{color:var(--cyan) !important;}
+  .leaflet-control-zoom a{background:#0a1424 !important;color:var(--white) !important;border-color:#1e3352 !important;}
+
+  /* Aircraft marker: plain text, no bubble */
+  .ac-marker{display:flex;align-items:flex-start;gap:5px;pointer-events:none;white-space:nowrap;}
+  .ac-icon{
+    font-size:15px;line-height:1;color:var(--yellow);
+    text-shadow:0 0 3px #000,0 0 6px rgba(0,0,0,.9);
+    transform-origin:center;
+  }
+  .ac-label{font-size:10.5px;line-height:1.25;font-weight:700;color:var(--cyan);
+    text-shadow:0 0 3px #000,0 1px 2px #000,0 0 8px rgba(0,0,0,.9);
+    letter-spacing:.3px;margin-top:1px;
+  }
+  .ac-label .l1{color:#fff;font-size:11px;}
+  .ac-label .l2{color:var(--cyan);}
+  .ac-label .l3{color:#ffb35b;}
+
+  .footer-note.radar{margin-top:0;padding:10px 14px;background:#0a1424;border-top:1px solid #1e3352;text-align:left;}
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <div class="topbar">
-    <div class="airport"><span class="code">CDG</span> AÉROPORT PARIS – CHARLES DE GAULLE</div>
+    <div class="airport"><span class="code">NTE</span> AÉROPORT NANTES ATLANTIQUE</div>
     <div style="display:flex;align-items:center;">
       <div class="clock" id="clock">--:--:--</div>
       <div class="date" id="dateline">—</div>
@@ -167,67 +210,85 @@
     <span class="status" id="apiStatus">Mode démo (aucune clé) — <a href="https://rapidapi.com/aedbx-aedbx/api/aerodatabox" target="_blank" rel="noopener">obtenir une clé AeroDataBox ↗</a></span>
   </div>
 
-  <div class="boards">
-    <div class="panel">
-      <div class="panel-head">
-        <div class="plane">✈</div>
-        <h2>Départs</h2>
-        <div class="sub" id="depMeta">—</div>
+  <div class="viewSwitch">
+    <span class="dot" id="dotBoard"></span><span class="lbl" id="lblBoard">Tableau des vols</span>
+    <span style="opacity:.3">·</span>
+    <span class="lbl" id="lblRadar">Radar Bretagne</span><span class="dot" id="dotRadar"></span>
+  </div>
+
+  <!-- ===== VIEW 1: FLIGHT BOARD ===== -->
+  <div class="viewpane" id="viewBoard">
+    <div class="boards">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="plane">✈</div>
+          <h2>Départs</h2>
+          <div class="sub" id="depMeta">—</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="num">Heure</th>
+              <th>Destination</th>
+              <th class="num">Vol</th>
+              <th class="gate">Porte</th>
+              <th class="status">Remarques</th>
+            </tr>
+          </thead>
+          <tbody id="depBody"><tr><td class="loading" colspan="5">Chargement…</td></tr></tbody>
+        </table>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th class="num">Heure</th>
-            <th>Destination</th>
-            <th class="num">Vol</th>
-            <th class="gate">Porte</th>
-            <th class="status">Remarques</th>
-          </tr>
-        </thead>
-        <tbody id="depBody"><tr><td class="loading" colspan="5">Chargement…</td></tr></tbody>
-      </table>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="plane">✈</div>
+          <h2>Arrivées</h2>
+          <div class="sub" id="arrMeta">—</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="num">Heure</th>
+              <th>Provenance</th>
+              <th class="num">Vol</th>
+              <th class="gate">Porte</th>
+              <th class="status">Remarques</th>
+            </tr>
+          </thead>
+          <tbody id="arrBody"><tr><td class="loading" colspan="5">Chargement…</td></tr></tbody>
+        </table>
+      </div>
     </div>
 
-    <div class="panel">
+    <div class="legend">
+      <span><span class="swatch sw-board"></span> Embarquement</span>
+      <span><span class="swatch sw-delay"></span> Retardé</span>
+      <span><span class="swatch sw-normal"></span> Prévu</span>
+    </div>
+
+    <div class="footer-note">Données : AeroDataBox (RapidAPI) · Actualisation automatique toutes les 5 minutes · ICAO LFRS</div>
+  </div>
+
+  <!-- ===== VIEW 2: RADAR ===== -->
+  <div class="viewpane hidden" id="viewRadar">
+    <div class="radarPanel">
       <div class="panel-head">
-        <div class="plane">✈</div>
-        <h2>Arrivées</h2>
-        <div class="sub" id="arrMeta">—</div>
+        <div class="plane">◎</div>
+        <h2>Radar trafic aérien — Bretagne</h2>
+        <div class="sub" id="radarMeta">—</div>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th class="num">Heure</th>
-            <th>Provenance</th>
-            <th class="num">Vol</th>
-            <th class="gate">Porte</th>
-            <th class="status">Remarques</th>
-          </tr>
-        </thead>
-        <tbody id="arrBody"><tr><td class="loading" colspan="5">Chargement…</td></tr></tbody>
-      </table>
+      <div id="radarMap"></div>
+      <div class="footer-note radar">Données : OpenSky Network (positions live) · Types avions : hexdb.io (best-effort) · Routes : OpenSky routes (best-effort) · Actualisation toutes les 20 s</div>
     </div>
   </div>
 
-  <div class="legend">
-    <span><span class="swatch sw-board"></span> Embarquement</span>
-    <span><span class="swatch sw-delay"></span> Retardé</span>
-    <span><span class="swatch sw-normal"></span> Prévu</span>
-  </div>
-
-  <div class="footer-note">Données : AeroDataBox (RapidAPI) · Actualisation automatique toutes les 5 minutes · ICAO LFPG</div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-const ICAO = 'LFRS';
-let API_KEY = '';
-const depBody = document.getElementById('depBody');
-const arrBody = document.getElementById('arrBody');
-const depMeta = document.getElementById('depMeta');
-const arrMeta = document.getElementById('arrMeta');
-const apiStatusEl = document.getElementById('apiStatus');
-
-// ---------- Clock ----------
+/* ============================================================
+   SHARED: clock
+   ============================================================ */
 function tickClock(){
   const now = new Date();
   const hh = String(now.getHours()).padStart(2,'0');
@@ -241,11 +302,50 @@ function tickClock(){
 }
 tickClock();
 setInterval(tickClock, 1000);
+function pad(n){return String(n).padStart(2,'0');}
 
-// ---------- Helpers ----------
+/* ============================================================
+   VIEW TOGGLE (board <-> radar every 15s)
+   ============================================================ */
+const viewBoard = document.getElementById('viewBoard');
+const viewRadar = document.getElementById('viewRadar');
+const dotBoard = document.getElementById('dotBoard');
+const dotRadar = document.getElementById('dotRadar');
+const lblBoard = document.getElementById('lblBoard');
+const lblRadar = document.getElementById('lblRadar');
+let showingBoard = true;
+
+function applyView(){
+  viewBoard.classList.toggle('hidden', !showingBoard);
+  viewRadar.classList.toggle('hidden', showingBoard);
+  dotBoard.classList.toggle('active', showingBoard);
+  dotRadar.classList.toggle('active', !showingBoard);
+  lblBoard.classList.toggle('active', showingBoard);
+  lblRadar.classList.toggle('active', !showingBoard);
+  if(!showingBoard){
+    // Leaflet needs a resize kick the first time its container becomes visible
+    setTimeout(()=>{ if(window.radarMapInstance) window.radarMapInstance.invalidateSize(); }, 60);
+  }
+}
+applyView();
+setInterval(()=>{
+  showingBoard = !showingBoard;
+  applyView();
+}, 15000);
+
+/* ============================================================
+   VIEW 1: FLIGHT BOARD (AeroDataBox) — Nantes Atlantique LFRS
+   ============================================================ */
+const ICAO = 'LFRS';
+let API_KEY = '';
+const depBody = document.getElementById('depBody');
+const arrBody = document.getElementById('arrBody');
+const depMeta = document.getElementById('depMeta');
+const arrMeta = document.getElementById('arrMeta');
+const apiStatusEl = document.getElementById('apiStatus');
+
 function fmtLocalTime(iso){
   if(!iso) return '--:--';
-  // AeroDataBox local timestamps look like "2026-08-21 18:35+02:00" or with T
   const m = iso.match(/(\d{2}):(\d{2})/);
   return m ? `${m[1]}:${m[2]}` : '--:--';
 }
@@ -278,33 +378,32 @@ function renderEmpty(tbody, msg){
   tbody.innerHTML = `<tr><td class="empty" colspan="5">${msg}</td></tr>`;
 }
 
-// ---------- Demo / fallback data (matches the board's look when no API key is set) ----------
 function demoData(){
   const now = new Date();
   const add = m => { const d = new Date(now.getTime()+m*60000); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
   const departures = [
-    [add(12),'Nice','France','AF 7620','B22','Boarding'],
-    [add(20),'Barcelone','Espagne','VY 8456','K14','Scheduled'],
-    [add(28),'New York JFK','États-Unis','AF 004','2E-K','Scheduled'],
-    [add(35),'Casablanca','Maroc','AT 762','E71','Delayed'],
-    [add(41),'Amsterdam','Pays-Bas','AF 1580','B44','Scheduled'],
-    [add(48),'Dubaï','É.A.U.','EK 074','2E-M','Gate closed'],
-    [add(55),'Tokyo Haneda','Japon','AF 276','2E-L','Scheduled'],
-    [add(63),'Alger','Algérie','AH 1012','E62','Scheduled'],
-    [add(70),'Rome Fiumicino','Italie','AZ 320','K02','Boarding'],
-    [add(78),'Montréal','Canada','AF 348','2E-J','Scheduled']
+    [add(12),'Paris Orly','France','AF 7620','12','Boarding'],
+    [add(20),'Lyon','France','AF 7801','8','Scheduled'],
+    [add(28),'Londres Gatwick','Royaume-Uni','EZY 8562','5','Scheduled'],
+    [add(35),'Marseille','France','AF 7935','3','Delayed'],
+    [add(41),'Ajaccio','France','AF 7402','9','Scheduled'],
+    [add(48),'Porto','Portugal','TP 851','14','Gate closed'],
+    [add(55),'Amsterdam','Pays-Bas','KL 1233','2','Scheduled'],
+    [add(63),'Toulouse','France','AF 7716','7','Scheduled'],
+    [add(70),'Casablanca','Maroc','AT 950','11','Boarding'],
+    [add(78),'Alger','Algérie','AH 1080','6','Scheduled']
   ];
   const arrivals = [
-    [add(-25),'Lisbonne','Portugal','TP 452','E30','Landed'],
-    [add(-14),'Madrid','Espagne','IB 3406','K10','Landed'],
-    [add(4),'Le Caire','Égypte','MS 793','E80','Expected'],
-    [add(11),'Londres Heathrow','Royaume-Uni','BA 308','2F-A','Delayed'],
-    [add(19),'Athènes','Grèce','A3 892','E44','Expected'],
-    [add(27),'Istanbul','Turquie','TK 1823','K18','Expected'],
-    [add(33),'Doha','Qatar','QR 038','2E-N','Expected'],
-    [add(40),'Séoul Incheon','Corée du Sud','KE 902','2E-P','Expected'],
-    [add(47),'Genève','Suisse','LX 1926','E36','Expected'],
-    [add(55),'Dakar','Sénégal','AF 718','2C-C','Expected']
+    [add(-25),'Bordeaux','France','AF 7658','4','Landed'],
+    [add(-14),'Nice','France','AF 7623','10','Landed'],
+    [add(4),'Lisbonne','Portugal','TP 858','13','Expected'],
+    [add(11),'Paris Orly','France','AF 7607','1','Delayed'],
+    [add(19),'Strasbourg','France','AF 7862','9','Expected'],
+    [add(27),'Dublin','Irlande','FR 4521','15','Expected'],
+    [add(33),'Madrid','Espagne','IB 3457','6','Expected'],
+    [add(40),'Genève','Suisse','LX 1932','8','Expected'],
+    [add(47),'Rome Fiumicino','Italie','AZ 328','3','Expected'],
+    [add(55),'Tunis','Tunisie','TU 720','12','Expected']
   ];
   return {departures, arrivals};
 }
@@ -317,15 +416,13 @@ function renderDemo(){
   arrMeta.textContent = 'Données de démonstration';
 }
 
-// ---------- Real API calls ----------
-function pad(n){return String(n).padStart(2,'0');}
 function isoLocal(d){
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 async function fetchDirection(direction){
   const now = new Date();
-  const later = new Date(now.getTime() + 5*60*60*1000); // 5h window (free-plan friendly)
+  const later = new Date(now.getTime() + 5*60*60*1000);
   const from = isoLocal(now);
   const to = isoLocal(later);
   const url = `https://aerodatabox.p.rapidapi.com/flights/airports/icao/${ICAO}/${from}/${to}`
@@ -337,9 +434,7 @@ async function fetchDirection(direction){
       'X-RapidAPI-Host': 'aerodatabox.p.rapidapi.com'
     }
   });
-  if(!res.ok){
-    throw new Error(`HTTP ${res.status}`);
-  }
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
@@ -429,16 +524,184 @@ document.getElementById('connectBtn').addEventListener('click', ()=>{
   startPolling();
 });
 
-// Auto-connect using the pre-filled key on load
-(function autoStart(){
+(function autoStartBoard(){
   const val = document.getElementById('apikey').value.trim();
-  if(val){
-    API_KEY = val;
-    startPolling();
-  } else {
-    renderDemo();
-  }
+  if(val){ API_KEY = val; startPolling(); }
+  else { renderDemo(); }
 })();
+
+/* ============================================================
+   VIEW 2: RADAR (Leaflet + OpenSky Network) — centered on Bretagne
+   ============================================================ */
+const BBOX = { lamin: 46.9, lomin: -5.6, lamax: 49.1, lomax: -0.6 }; // Bretagne + approaches
+const radarMap = L.map('radarMap', {
+  zoomControl:true,
+  attributionControl:true,
+  minZoom:6, maxZoom:11
+}).setView([48.15, -3.0], 8);
+window.radarMapInstance = radarMap;
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution:'&copy; OpenStreetMap &copy; CARTO',
+  subdomains:'abcd', maxZoom:19
+}).addTo(radarMap);
+
+const radarMeta = document.getElementById('radarMeta');
+
+// caches
+const typeCache = {};   // icao24 -> "B38M" | null
+const routeCache = {};  // callsign -> "DEP-ARR" | null
+const markers = {};     // icao24 -> L.marker
+
+function msToKt(v){ return v==null ? null : Math.round(v * 1.94384); }
+function mToFt(v){ return v==null ? null : Math.round(v * 3.28084); }
+
+function planeIconHtml(track, callsign, type, altFt, spdKt, onGround, route){
+  const rot = (track==null ? 0 : track);
+  const l1 = `${(callsign||'—').trim()}${type ? ' '+type : ''}`;
+  const l2 = onGround ? 'AU SOL' : `${altFt!=null?altFt+' ft':'—'}   ${spdKt!=null?spdKt+' kt':'—'}`;
+  const l3 = route ? route : '';
+  return `<div class="ac-marker">
+      <div class="ac-icon" style="transform:rotate(${rot}deg)">&#9992;</div>
+      <div class="ac-label">
+        <div class="l1">${l1}</div>
+        <div class="l2">${l2}</div>
+        ${l3 ? `<div class="l3">${l3}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+async function fetchAircraftType(icao24){
+  if(icao24 in typeCache) return typeCache[icao24];
+  typeCache[icao24] = null; // mark as in-flight to avoid duplicate fetches
+  try{
+    const res = await fetch(`https://hexdb.io/api/v1/aircraft/${icao24}`);
+    if(res.ok){
+      const data = await res.json();
+      const t = data && (data.ICAOTypeCode || data.Type) ? (data.ICAOTypeCode || data.Type) : null;
+      typeCache[icao24] = t || null;
+    }
+  }catch(e){ /* best-effort, ignore */ }
+  return typeCache[icao24];
+}
+
+async function fetchRoute(callsign){
+  const cs = (callsign||'').trim();
+  if(!cs) return null;
+  if(cs in routeCache) return routeCache[cs];
+  routeCache[cs] = null;
+  try{
+    const res = await fetch(`https://opensky-network.org/api/routes?callsign=${encodeURIComponent(cs)}`);
+    if(res.ok){
+      const data = await res.json();
+      if(data && Array.isArray(data.route) && data.route.length >= 2){
+        routeCache[cs] = `${data.route[0]} → ${data.route[data.route.length-1]}`;
+      }
+    }
+  }catch(e){ /* best-effort, ignore */ }
+  return routeCache[cs];
+}
+
+let enrichQueue = [];
+let enrichBusy = false;
+function queueEnrich(icao24, callsign){
+  enrichQueue.push({icao24, callsign});
+  if(!enrichBusy) drainEnrichQueue();
+}
+async function drainEnrichQueue(){
+  enrichBusy = true;
+  while(enrichQueue.length){
+    const {icao24, callsign} = enrichQueue.shift();
+    const needsType = !(icao24 in typeCache);
+    const needsRoute = callsign && !((callsign.trim()) in routeCache);
+    if(needsType) await fetchAircraftType(icao24);
+    if(needsRoute) await fetchRoute(callsign);
+    if(needsType || needsRoute){
+      updateMarkerContent(icao24, callsign);
+      await new Promise(r=>setTimeout(r, 250)); // be gentle with free APIs
+    }
+  }
+  enrichBusy = false;
+}
+
+const lastState = {}; // icao24 -> raw state row, so we can re-render after enrichment
+
+function updateMarkerContent(icao24, callsign){
+  const s = lastState[icao24];
+  const m = markers[icao24];
+  if(!s || !m) return;
+  const type = typeCache[icao24];
+  const route = routeCache[(callsign||'').trim()];
+  const icon = L.divIcon({
+    className:'',
+    html: planeIconHtml(s.true_track, s.callsign, type, mToFt(s.baro_altitude ?? s.geo_altitude), msToKt(s.velocity), s.on_ground, route),
+    iconSize:[1,1], iconAnchor:[8,8]
+  });
+  m.setIcon(icon);
+}
+
+async function refreshRadar(){
+  radarMeta.textContent = 'Actualisation…';
+  try{
+    const url = `https://opensky-network.org/api/states/all?lamin=${BBOX.lamin}&lomin=${BBOX.lomin}&lamax=${BBOX.lamax}&lomax=${BBOX.lomax}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const states = data.states || [];
+
+    const seen = new Set();
+    let count = 0;
+    for(const row of states){
+      const [icao24, callsign, origin_country, time_position, last_contact,
+             longitude, latitude, baro_altitude, on_ground, velocity,
+             true_track, vertical_rate, sensors, geo_altitude, squawk, spi, position_source] = row;
+      if(latitude == null || longitude == null) continue;
+      count++;
+      seen.add(icao24);
+
+      const stateObj = {icao24, callsign, baro_altitude, geo_altitude, on_ground, velocity, true_track, last_contact};
+      lastState[icao24] = stateObj;
+
+      const type = typeCache[icao24];
+      const route = routeCache[(callsign||'').trim()];
+      const html = planeIconHtml(true_track, callsign, type, mToFt(baro_altitude ?? geo_altitude), msToKt(velocity), on_ground, route);
+      const icon = L.divIcon({className:'', html, iconSize:[1,1], iconAnchor:[8,8]});
+
+      if(markers[icao24]){
+        markers[icao24].setLatLng([latitude, longitude]);
+        markers[icao24].setIcon(icon);
+      } else {
+        markers[icao24] = L.marker([latitude, longitude], {icon, interactive:false}).addTo(radarMap);
+      }
+
+      if(!(icao24 in typeCache) || (callsign && !((callsign.trim()) in routeCache))){
+        queueEnrich(icao24, callsign);
+      }
+    }
+
+    // remove markers for aircraft that left the bbox
+    for(const id in markers){
+      if(!seen.has(id)){
+        radarMap.removeLayer(markers[id]);
+        delete markers[id];
+        delete lastState[id];
+      }
+    }
+
+    const now = new Date();
+    radarMeta.textContent = `${count} avions · MAJ ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  }catch(err){
+    console.error(err);
+    radarMeta.textContent = `Erreur OpenSky (${err.message}) — nouvelle tentative au prochain cycle.`;
+  }
+}
+
+refreshRadar();
+setInterval(refreshRadar, 20000);
 </script>
 </body>
 </html>
+
+
+
+
