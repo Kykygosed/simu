@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>CDG · Tableau des vols</title>
+<style>
+  @import url('https://cdnjs.cloudflare.com/ajax/libs/font-logos/1.2.0/font-logos.min.css');
+
+  :root{
+    --board-bg-1:#0b1a33;
+    --board-bg-2:#050d1c;
+    --yellow:#ffcf00;
+    --yellow-dim:#c9a300;
+    --red:#c8102e;
+    --panel-line:#1c3a5e;
+    --row-a:#0e2140;
+    --row-b:#0a1830;
+    --row-board:#3a3204;
+    --row-delay:#3a0f14;
+    --text-dim:#7fa0c9;
+    --white:#f4f7fb;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;height:100%;
+    background:radial-gradient(ellipse at 50% -10%, #142c52 0%, #050b16 55%, #020409 100%);
+    font-family:'Bahnschrift','Segoe UI',Arial,sans-serif;
+    color:var(--white);
+    overflow-x:hidden;
+  }
+  .wrap{max-width:1400px;margin:0 auto;padding:18px 18px 40px;}
+
+  /* ---- Top strip: airport name / clock ---- */
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px;margin-bottom:14px;
+    background:linear-gradient(180deg,#111c30,#0a1424);
+    border:1px solid #1e3352;border-radius:6px;
+  }
+  .topbar .airport{
+    font-weight:800;letter-spacing:2px;font-size:15px;color:var(--yellow);
+    display:flex;align-items:center;gap:10px;
+  }
+  .topbar .airport .code{
+    background:var(--yellow);color:#101a2b;padding:2px 8px;border-radius:3px;font-size:13px;
+  }
+  .topbar .clock{font-variant-numeric:tabular-nums;font-size:20px;font-weight:700;letter-spacing:2px;color:var(--white);}
+  .topbar .date{font-size:11px;color:var(--text-dim);letter-spacing:1px;margin-left:10px;}
+
+  /* ---- Config bar (API key) ---- */
+  .config{
+    display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+    background:#0a1424;border:1px solid #1e3352;border-radius:6px;
+    padding:8px 12px;margin-bottom:16px;font-size:12px;color:var(--text-dim);
+  }
+  .config input{
+    background:#0e1c33;border:1px solid #24456f;color:var(--white);
+    padding:6px 8px;border-radius:4px;font-size:12px;min-width:260px;
+  }
+  .config button{
+    background:var(--yellow);color:#101a2b;border:none;font-weight:700;
+    padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;letter-spacing:.5px;
+  }
+  .config button:hover{background:#ffdd44;}
+  .config .status{font-size:11px;}
+  .config .status.ok{color:#5be08a;}
+  .config .status.err{color:#ff6b6b;}
+  .config a{color:var(--yellow);}
+
+  /* ---- Boards grid: 2 panels side by side ---- */
+  .boards{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  @media (max-width:900px){.boards{grid-template-columns:1fr;}}
+
+  .panel{
+    background:linear-gradient(180deg,var(--board-bg-1),var(--board-bg-2));
+    border:1px solid var(--panel-line);
+    border-radius:6px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(0,0,0,.5), inset 0 0 60px rgba(0,40,90,.15);
+  }
+  .panel-head{
+    background:#0a0e15;
+    padding:12px 16px;
+    display:flex;align-items:center;gap:10px;
+    border-bottom:2px solid var(--yellow-dim);
+  }
+  .panel-head .plane{
+    width:26px;height:26px;background:var(--yellow);border-radius:4px;
+    display:flex;align-items:center;justify-content:center;font-size:15px;color:#101a2b;
+  }
+  .panel-head h2{
+    margin:0;font-size:19px;letter-spacing:1.5px;color:var(--yellow);font-weight:800;
+    text-transform:uppercase;
+  }
+  .panel-head .sub{margin-left:auto;font-size:11px;color:var(--text-dim);letter-spacing:1px;}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead tr{background:linear-gradient(180deg,#5a0d18,#3d0a12);}
+  thead th{
+    text-align:left;padding:7px 10px;font-size:10.5px;letter-spacing:1.2px;
+    color:#ffd7d7;text-transform:uppercase;font-weight:700;
+    border-bottom:1px solid #6b1220;
+  }
+  thead th.num{width:60px;}
+  thead th.gate{width:60px;text-align:center;}
+  thead th.status{width:110px;}
+
+  tbody tr{border-bottom:1px solid #0d1b30;}
+  tbody tr:nth-child(odd){background:var(--row-a);}
+  tbody tr:nth-child(even){background:var(--row-b);}
+  tbody tr.boarding{background:var(--row-board) !important;color:#1a1400;}
+  tbody tr.boarding td{color:#1a1400;}
+  tbody tr.delayed{background:var(--row-delay) !important;}
+  tbody tr.delayed td.status{color:#ff9d9d;}
+
+  tbody td{padding:8px 10px;vertical-align:middle;font-variant-numeric:tabular-nums;}
+  td.time{font-weight:800;font-size:14px;letter-spacing:.5px;}
+  td.city{font-weight:600;letter-spacing:.3px;}
+  td.city .country{display:block;font-size:10px;color:var(--text-dim);font-weight:400;letter-spacing:.5px;}
+  tr.boarding td.city .country{color:#4a3d00;}
+
+  .flightbadge{
+    display:inline-flex;align-items:center;gap:5px;font-weight:800;font-size:11.5px;
+    background:#0e1c33;border:1px solid #24456f;padding:3px 7px;border-radius:3px;letter-spacing:.5px;
+  }
+  tr.boarding .flightbadge{background:#00000022;border-color:#00000033;}
+
+  td.gate{text-align:center;font-weight:700;}
+  td.status{font-weight:700;font-size:11.5px;letter-spacing:.5px;text-transform:uppercase;}
+  .status-scheduled{color:#8fb8e8;}
+  .status-boarding{color:#1a1400;}
+  .status-gateclosed,.status-departed,.status-landed{color:#7fa0c9;}
+  .status-delayed{color:#ff9d9d;}
+  .status-cancelled{color:#ff5b5b;}
+
+  .empty, .loading{padding:26px;text-align:center;color:var(--text-dim);font-size:13px;letter-spacing:.5px;}
+
+  .legend{
+    display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;padding:10px 14px;
+    background:#0a1424;border:1px solid #1e3352;border-radius:6px;font-size:11px;color:var(--text-dim);
+  }
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .swatch{width:12px;height:12px;border-radius:2px;display:inline-block;}
+  .sw-board{background:var(--row-board);}
+  .sw-delay{background:var(--row-delay);}
+  .sw-normal{background:var(--row-a);border:1px solid #24456f;}
+
+  .footer-note{margin-top:14px;font-size:10.5px;color:#3f5a80;text-align:center;letter-spacing:.5px;}
+
+  ::selection{background:var(--yellow);color:#101a2b;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="airport"><span class="code">CDG</span> AÉROPORT PARIS – CHARLES DE GAULLE</div>
+    <div style="display:flex;align-items:center;">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="date" id="dateline">—</div>
+    </div>
+  </div>
+
+  <div class="config">
+    <label for="apikey">Clé RapidAPI (AeroDataBox) :</label>
+    <input type="password" id="apikey" placeholder="colle ta clé RapidAPI ici" value="df3effcbaamsh11c2531de6d8397p109270jsn10ba5f7095e8">
+    <button id="connectBtn">Connecter</button>
+    <span class="status" id="apiStatus">Mode démo (aucune clé) — <a href="https://rapidapi.com/aedbx-aedbx/api/aerodatabox" target="_blank" rel="noopener">obtenir une clé AeroDataBox ↗</a></span>
+  </div>
+
+  <div class="boards">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="plane">✈</div>
+        <h2>Départs</h2>
+        <div class="sub" id="depMeta">—</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th class="num">Heure</th>
+            <th>Destination</th>
+            <th class="num">Vol</th>
+            <th class="gate">Porte</th>
+            <th class="status">Remarques</th>
+          </tr>
+        </thead>
+        <tbody id="depBody"><tr><td class="loading" colspan="5">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div class="plane">✈</div>
+        <h2>Arrivées</h2>
+        <div class="sub" id="arrMeta">—</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th class="num">Heure</th>
+            <th>Provenance</th>
+            <th class="num">Vol</th>
+            <th class="gate">Porte</th>
+            <th class="status">Remarques</th>
+          </tr>
+        </thead>
+        <tbody id="arrBody"><tr><td class="loading" colspan="5">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch sw-board"></span> Embarquement</span>
+    <span><span class="swatch sw-delay"></span> Retardé</span>
+    <span><span class="swatch sw-normal"></span> Prévu</span>
+  </div>
+
+  <div class="footer-note">Données : AeroDataBox (RapidAPI) · Actualisation automatique toutes les 5 minutes · ICAO LFPG</div>
+</div>
+
+<script>
+const ICAO = 'LFPG';
+let API_KEY = '';
+const depBody = document.getElementById('depBody');
+const arrBody = document.getElementById('arrBody');
+const depMeta = document.getElementById('depMeta');
+const arrMeta = document.getElementById('arrMeta');
+const apiStatusEl = document.getElementById('apiStatus');
+
+// ---------- Clock ----------
+function tickClock(){
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  const ss = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock').textContent = `${hh}:${mm}:${ss}`;
+  const days = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+  const months = ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+  document.getElementById('dateline').textContent =
+    `${days[now.getDay()]} ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+}
+tickClock();
+setInterval(tickClock, 1000);
+
+// ---------- Helpers ----------
+function fmtLocalTime(iso){
+  if(!iso) return '--:--';
+  // AeroDataBox local timestamps look like "2026-08-21 18:35+02:00" or with T
+  const m = iso.match(/(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : '--:--';
+}
+
+function statusLabel(status){
+  if(!status) return {label:'Prévu', cls:'status-scheduled', row:''};
+  const s = status.toLowerCase();
+  if(s.includes('board')) return {label:'Embarquement', cls:'status-boarding', row:'boarding'};
+  if(s.includes('cancel')) return {label:'Annulé', cls:'status-cancelled', row:'delayed'};
+  if(s.includes('delay')) return {label:'Retardé', cls:'status-delayed', row:'delayed'};
+  if(s.includes('depart')) return {label:'Décollé', cls:'status-departed', row:''};
+  if(s.includes('land')) return {label:'Atterri', cls:'status-landed', row:''};
+  if(s.includes('gate') && s.includes('clos')) return {label:'Porte fermée', cls:'status-gateclosed', row:''};
+  if(s.includes('expect') || s.includes('sched')) return {label:'Prévu', cls:'status-scheduled', row:''};
+  return {label: status, cls:'status-scheduled', row:''};
+}
+
+function rowHtml(time, cityName, countryOrTerm, flightNum, gate, status){
+  const st = statusLabel(status);
+  return `<tr class="${st.row}">
+    <td class="time">${time}</td>
+    <td class="city">${cityName}<span class="country">${countryOrTerm||''}</span></td>
+    <td><span class="flightbadge">${flightNum||'—'}</span></td>
+    <td class="gate">${gate||'—'}</td>
+    <td class="status ${st.cls}">${st.label}</td>
+  </tr>`;
+}
+
+function renderEmpty(tbody, msg){
+  tbody.innerHTML = `<tr><td class="empty" colspan="5">${msg}</td></tr>`;
+}
+
+// ---------- Demo / fallback data (matches the board's look when no API key is set) ----------
+function demoData(){
+  const now = new Date();
+  const add = m => { const d = new Date(now.getTime()+m*60000); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+  const departures = [
+    [add(12),'Nice','France','AF 7620','B22','Boarding'],
+    [add(20),'Barcelone','Espagne','VY 8456','K14','Scheduled'],
+    [add(28),'New York JFK','États-Unis','AF 004','2E-K','Scheduled'],
+    [add(35),'Casablanca','Maroc','AT 762','E71','Delayed'],
+    [add(41),'Amsterdam','Pays-Bas','AF 1580','B44','Scheduled'],
+    [add(48),'Dubaï','É.A.U.','EK 074','2E-M','Gate closed'],
+    [add(55),'Tokyo Haneda','Japon','AF 276','2E-L','Scheduled'],
+    [add(63),'Alger','Algérie','AH 1012','E62','Scheduled'],
+    [add(70),'Rome Fiumicino','Italie','AZ 320','K02','Boarding'],
+    [add(78),'Montréal','Canada','AF 348','2E-J','Scheduled']
+  ];
+  const arrivals = [
+    [add(-25),'Lisbonne','Portugal','TP 452','E30','Landed'],
+    [add(-14),'Madrid','Espagne','IB 3406','K10','Landed'],
+    [add(4),'Le Caire','Égypte','MS 793','E80','Expected'],
+    [add(11),'Londres Heathrow','Royaume-Uni','BA 308','2F-A','Delayed'],
+    [add(19),'Athènes','Grèce','A3 892','E44','Expected'],
+    [add(27),'Istanbul','Turquie','TK 1823','K18','Expected'],
+    [add(33),'Doha','Qatar','QR 038','2E-N','Expected'],
+    [add(40),'Séoul Incheon','Corée du Sud','KE 902','2E-P','Expected'],
+    [add(47),'Genève','Suisse','LX 1926','E36','Expected'],
+    [add(55),'Dakar','Sénégal','AF 718','2C-C','Expected']
+  ];
+  return {departures, arrivals};
+}
+
+function renderDemo(){
+  const {departures, arrivals} = demoData();
+  depBody.innerHTML = departures.map(r=>rowHtml(r[0],r[1],r[2],r[3],r[4],r[5])).join('');
+  arrBody.innerHTML = arrivals.map(r=>rowHtml(r[0],r[1],r[2],r[3],r[4],r[5])).join('');
+  depMeta.textContent = 'Données de démonstration';
+  arrMeta.textContent = 'Données de démonstration';
+}
+
+// ---------- Real API calls ----------
+function pad(n){return String(n).padStart(2,'0');}
+function isoLocal(d){
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function fetchDirection(direction){
+  const now = new Date();
+  const later = new Date(now.getTime() + 5*60*60*1000); // 5h window (free-plan friendly)
+  const from = isoLocal(now);
+  const to = isoLocal(later);
+  const url = `https://aerodatabox.p.rapidapi.com/flights/airports/icao/${ICAO}/${from}/${to}`
+    + `?withLeg=true&direction=${direction}&withCancelled=true&withCodeshared=true&withCargo=false&withPrivate=false&withLocation=false`;
+
+  const res = await fetch(url, {
+    headers:{
+      'X-RapidAPI-Key': API_KEY,
+      'X-RapidAPI-Host': 'aerodatabox.p.rapidapi.com'
+    }
+  });
+  if(!res.ok){
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+async function loadRealData(){
+  apiStatusEl.textContent = 'Connexion à AeroDataBox…';
+  apiStatusEl.className = 'status';
+  try{
+    const [depData, arrData] = await Promise.all([
+      fetchDirection('Departure'),
+      fetchDirection('Arrival')
+    ]);
+
+    const departures = (depData.departures || []).slice(0, 14);
+    const arrivals = (arrData.arrivals || []).slice(0, 14);
+
+    if(departures.length === 0){
+      renderEmpty(depBody, 'Aucun départ trouvé sur la période.');
+    } else {
+      depBody.innerHTML = departures.map(f=>{
+        const time = fmtLocalTime(f.movement?.scheduledTime?.local || f.departure?.scheduledTime?.local);
+        const dest = f.movement?.airport?.name || f.arrival?.airport?.name || '—';
+        const terminal = f.movement?.terminal ? `Terminal ${f.movement.terminal}` : '';
+        const num = f.number || f.callSign || '—';
+        const gate = f.movement?.gate || '—';
+        const status = f.status || '';
+        return rowHtml(time, dest, terminal, num, gate, status);
+      }).join('');
+    }
+
+    if(arrivals.length === 0){
+      renderEmpty(arrBody, 'Aucune arrivée trouvée sur la période.');
+    } else {
+      arrBody.innerHTML = arrivals.map(f=>{
+        const time = fmtLocalTime(f.movement?.scheduledTime?.local || f.arrival?.scheduledTime?.local);
+        const origin = f.movement?.airport?.name || f.departure?.airport?.name || '—';
+        const terminal = f.movement?.terminal ? `Terminal ${f.movement.terminal}` : '';
+        const num = f.number || f.callSign || '—';
+        const gate = f.movement?.gate || '—';
+        const status = f.status || '';
+        return rowHtml(time, origin, terminal, num, gate, status);
+      }).join('');
+    }
+
+    const now = new Date();
+    const stamp = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    depMeta.textContent = `Mis à jour ${stamp}`;
+    arrMeta.textContent = `Mis à jour ${stamp}`;
+    apiStatusEl.textContent = 'Connecté à AeroDataBox ✓';
+    apiStatusEl.className = 'status ok';
+  }catch(err){
+    console.error(err);
+    apiStatusEl.textContent = `Erreur API (${err.message}) — vérifie ta clé/abonnement RapidAPI. Affichage en mode démo.`;
+    apiStatusEl.className = 'status err';
+    renderDemo();
+  }
+}
+
+let refreshTimer = null;
+function startPolling(){
+  if(refreshTimer) clearInterval(refreshTimer);
+  loadRealData();
+  refreshTimer = setInterval(loadRealData, 5*60*1000);
+}
+
+document.getElementById('connectBtn').addEventListener('click', ()=>{
+  const val = document.getElementById('apikey').value.trim();
+  if(!val){
+    apiStatusEl.textContent = 'Mode démo (aucune clé) — colle une clé RapidAPI valide pour des données en direct.';
+    apiStatusEl.className = 'status';
+    renderDemo();
+    if(refreshTimer) clearInterval(refreshTimer);
+    return;
+  }
+  API_KEY = val;
+  startPolling();
+});
+
+// Auto-connect using the pre-filled key on load
+(function autoStart(){
+  const val = document.getElementById('apikey').value.trim();
+  if(val){
+    API_KEY = val;
+    startPolling();
+  } else {
+    renderDemo();
+  }
+})();
+</script>
+</body>
+</html>
