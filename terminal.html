@@ -415,13 +415,13 @@ function isoLocal(d){
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-async function fetchDirection(direction){
+async function fetchBoth(){
   const now = new Date();
   const later = new Date(now.getTime() + 5*60*60*1000);
   const from = isoLocal(now);
   const to = isoLocal(later);
   const url = `https://aerodatabox.p.rapidapi.com/flights/airports/icao/${ICAO}/${from}/${to}`
-    + `?withLeg=true&direction=${direction}&withCancelled=true&withCodeshared=false&withCargo=false&withPrivate=false&withLocation=false`;
+    + `?withLeg=true&direction=Both&withCancelled=true&withCodeshared=false&withCargo=false&withPrivate=false&withLocation=false`;
 
   const res = await fetch(url, {
     headers:{
@@ -429,6 +429,7 @@ async function fetchDirection(direction){
       'X-RapidAPI-Host': 'aerodatabox.p.rapidapi.com'
     }
   });
+  if(res.status === 429) throw new Error('429 — quota RapidAPI dépassé, réessaie plus tard');
   if(!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -449,13 +450,10 @@ async function loadRealData(){
   apiStatusEl.textContent = 'Connexion à AeroDataBox…';
   apiStatusEl.className = 'status';
   try{
-    const [depData, arrData] = await Promise.all([
-      fetchDirection('Departure'),
-      fetchDirection('Arrival')
-    ]);
+    const data = await fetchBoth();
 
-    const departures = dedupeByNumber(depData.departures || []).slice(0, 14);
-    const arrivals = dedupeByNumber(arrData.arrivals || []).slice(0, 14);
+    const departures = dedupeByNumber(data.departures || []).slice(0, 14);
+    const arrivals = dedupeByNumber(data.arrivals || []).slice(0, 14);
 
     if(departures.length === 0){
       renderEmpty(depBody, 'Aucun départ trouvé sur la période.');
@@ -493,7 +491,11 @@ async function loadRealData(){
     apiStatusEl.className = 'status ok';
   }catch(err){
     console.error(err);
-    apiStatusEl.textContent = `Erreur API (${err.message}) — vérifie ta clé/abonnement RapidAPI. Affichage en mode démo.`;
+    if(String(err.message).includes('429')){
+      apiStatusEl.textContent = `Quota RapidAPI dépassé (429) — ton plan AeroDataBox a atteint sa limite de requêtes. Affichage en mode démo en attendant.`;
+    } else {
+      apiStatusEl.textContent = `Erreur API (${err.message}) — vérifie ta clé/abonnement RapidAPI. Affichage en mode démo.`;
+    }
     apiStatusEl.className = 'status err';
     renderDemo();
   }
@@ -503,7 +505,7 @@ let refreshTimer = null;
 function startPolling(){
   if(refreshTimer) clearInterval(refreshTimer);
   loadRealData();
-  refreshTimer = setInterval(loadRealData, 5*60*1000);
+  refreshTimer = setInterval(loadRealData, 10*60*1000); // every 10 min to stay well within free-tier quotas
 }
 
 document.getElementById('connectBtn').addEventListener('click', ()=>{
@@ -613,13 +615,26 @@ async function drainRouteQueue(){
   routeBusy = false;
 }
 
+async function fetchAdsbLol(){
+  const path = `https://api.adsb.lol/v2/point/${RADAR_CENTER[0]}/${RADAR_CENTER[1]}/${RADAR_RADIUS_NM}`;
+  try{
+    // Try direct first (works when the API allows the caller's origin)
+    const res = await fetch(path);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }catch(directErr){
+    // adsb.lol doesn't send CORS headers for every origin — fall back to a public CORS proxy
+    const proxied = `https://api.allorigins.win/raw?url=${encodeURIComponent(path)}`;
+    const res2 = await fetch(proxied);
+    if(!res2.ok) throw new Error(`HTTP ${res2.status} (via proxy)`);
+    return await res2.json();
+  }
+}
+
 async function refreshRadar(){
   radarMeta.textContent = 'Actualisation…';
   try{
-    const url = `https://api.adsb.lol/v2/point/${RADAR_CENTER[0]}/${RADAR_CENTER[1]}/${RADAR_RADIUS_NM}`;
-    const res = await fetch(url);
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await fetchAdsbLol();
     const list = data.ac || [];
 
     radarNotice.classList.remove('show');
