@@ -104,6 +104,10 @@
    Les uplinks prédéfinis ou libres sont envoyés au pilote IA (Groq)
    qui répond en downlink (WILCO / UNABLE / ROGER + effet appliqué
    aux valeurs assignées de l'avion). Pas d'audio ici (canal texte).
+   Une clairance de cap (TURN LEFT/RIGHT HEADING) bascule l'avion en
+   "headingHold" (le moteur radar.html cesse de recalculer le cap
+   automatiquement le long de sa route). "RESUME OWN NAVIGATION"
+   lève ce mode et rend la main à la navigation automatique.
    ⚠️ Clé Groq appelée directement côté client, sans proxy — voir
    vhf.html pour la note de sécurité complète.
    ============================================================ */
@@ -221,12 +225,16 @@ function applyClearanceEffects(message){
   }
   if ((m = message.match(/TURN (?:LEFT|RIGHT) HEADING (\d+)/i))) {
     updates.assignedHeading = parseInt(m[1]);
+    updates.headingHold = true; // cap imposé: le moteur ne navigue plus automatiquement le long de la route
   }
   if ((m = message.match(/MAINTAIN SPEED (\d+)/i))) {
     updates.assignedSpeed = parseInt(m[1]);
   }
   if ((m = message.match(/CONTACT ([\d.]+)/i))) {
     updates.frequency = m[1];
+  }
+  if (/RESUME OWN NAVIGATION/i.test(message)) {
+    updates.headingHold = false; // rend la main à la navigation automatique le long de la route
   }
   if (Object.keys(updates).length) REF.aircraft.child(selectedCallsign).update(updates);
 }
