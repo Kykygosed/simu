@@ -79,6 +79,10 @@
    Chaque strip reflète /simulation/aircraft/{callsign}
    Les champs "assigned*" sont modifiables localement puis envoyés
    d'un coup vers Firebase via le bouton TRANSMIT (clairance groupée).
+   Note: assigner un cap manuellement (assignedHeading) bascule
+   l'avion en "headingHold" (le moteur radar.html n'écrase plus le
+   cap avec la navigation automatique le long de sa route tant que
+   ce mode n'est pas levé, ex: via CPDLC "RESUME OWN NAVIGATION").
    ============================================================ */
 const firebaseConfig = {
   apiKey: "AIzaSyBP2q6Wfxz02MfK69BFHx9_FUjDGTmAcw",
@@ -113,7 +117,7 @@ function flFmt(ft){ return 'FL' + Math.round((ft||0)/100).toString().padStart(3,
 function render(){
   const container = document.getElementById('strip-container');
   const keys = Object.keys(aircraftData).sort();
-  if (!keys.length){ container.innerHTML = '<div class="empty">Aucun avion. Ouvrez radar.html et cliquez "INIT DEPUIS OPENSKY".</div>'; return; }
+  if (!keys.length){ container.innerHTML = '<div class="empty">Aucun avion. Ouvrez radar.html et appuyez sur "S" pour faire apparaître du trafic.</div>'; return; }
 
   container.innerHTML = keys.map(cs => stripHtml(cs, aircraftData[cs])).join('');
 
@@ -170,7 +174,7 @@ function stripHtml(cs, ac){
         <input id="inp-${cs}-assignedAltitude" type="number" value="${altAssignedFL}"></div>
     </div>
     <div class="field-group">
-      <label>CAP</label>
+      <label>CAP ${ac.headingHold ? '(tenu)' : '(auto)'}</label>
       <div class="field-row"><span class="cur">${Math.round(ac.heading||0)}°</span>
         <input id="inp-${cs}-assignedHeading" type="number" value="${hdgAssigned}"></div>
     </div>
@@ -198,9 +202,17 @@ async function transmit(cs){
   const updates = {};
   const parts = [];
   if (edits.assignedAltitude != null){ updates['assignedAltitude'] = edits.assignedAltitude; parts.push('CLIMB/DESCEND TO FL'+Math.round(edits.assignedAltitude/100)); }
-  if (edits.assignedHeading != null){ updates['assignedHeading'] = edits.assignedHeading; parts.push('TURN HEADING '+edits.assignedHeading); }
+  if (edits.assignedHeading != null){
+    updates['assignedHeading'] = edits.assignedHeading;
+    updates['headingHold'] = true; // un cap donné manuellement est tenu tant que le contrôleur ne le lève pas
+    parts.push('TURN HEADING '+edits.assignedHeading);
+  }
   if (edits.assignedSpeed != null){ updates['assignedSpeed'] = edits.assignedSpeed; parts.push('SPEED '+edits.assignedSpeed); }
-  if (edits.directTo != null && edits.directTo !== ''){ updates['directTo'] = edits.directTo; parts.push('DIRECT TO '+edits.directTo); }
+  if (edits.directTo != null && edits.directTo !== ''){
+    updates['directTo'] = edits.directTo;
+    updates['headingHold'] = false; // un "direct to" rend la main à la navigation automatique
+    parts.push('DIRECT TO '+edits.directTo);
+  }
   updates['lastClearance'] = parts.join(', ');
   updates['lastClearanceTime'] = Date.now();
   await REF.aircraft.child(cs).update(updates);
