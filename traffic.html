@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRAFFIC — Rennes ACC</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#03070c; --bg-panel:#0a141f; --bg-panel-alt:#0d1826;
+    --border:#1b2c3d; --border-bright:#2a4258;
+    --cyan:#5ad1ff; --cyan-dim:#2f7fa3;
+    --text:#cfe3f2; --text-dim:#5f7f96;
+    --green:#3ecf8e; --amber:#f0a935; --red:#ff4d4d;
+    --font:'JetBrains Mono','IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--bg-deep);color:var(--text);font-family:var(--font);}
+  #topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:var(--bg-panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;}
+  #topbar .title{color:var(--cyan);font-weight:700;font-size:14px;}
+  #clock{color:var(--green);font-weight:600;font-size:13px;}
+  #controls{display:flex;gap:10px;align-items:center;}
+  #search{background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--text);font-family:var(--font);padding:6px 10px;border-radius:2px;font-size:12px;width:180px;}
+  select{background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--text);font-family:var(--font);padding:6px;border-radius:2px;font-size:12px;}
+
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  thead th{
+    position:sticky;top:45px;background:var(--bg-panel);color:var(--cyan-dim);
+    text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;
+    letter-spacing:.05em;font-size:10px;user-select:none;
+  }
+  thead th:hover{color:var(--cyan);}
+  tbody tr{border-bottom:1px solid #0f1c29;cursor:pointer;}
+  tbody tr:hover{background:#0d1a28;}
+  tbody tr.selected{background:#0e1c2c;outline:1px solid var(--cyan);}
+  tbody tr.emergency{background:#1a0a0a;}
+  tbody tr.emergency:hover{background:#220d0d;}
+  td{padding:7px 10px;}
+  .cs{font-weight:700;color:var(--cyan);}
+  .emg-badge{background:var(--red);color:#1a0000;font-weight:700;font-size:9px;padding:1px 5px;border-radius:2px;margin-left:6px;}
+  .empty{text-align:center;color:var(--text-dim);padding:40px;}
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <span class="title">RENNES ACC — TRAFFIC</span>
+    <div id="controls">
+      <input id="search" type="text" placeholder="filtrer callsign / type…">
+      <select id="filter-emg">
+        <option value="all">Tous</option>
+        <option value="emg">Urgences seulement</option>
+      </select>
+    </div>
+    <span id="clock">--:--:--</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th data-key="callsign">CALLSIGN</th>
+        <th data-key="type">TYPE</th>
+        <th data-key="route">ROUTE</th>
+        <th data-key="altitude">ALTITUDE</th>
+        <th data-key="heading">CAP</th>
+        <th data-key="speed">VITESSE</th>
+        <th data-key="frequency">FRÉQ</th>
+        <th data-key="status">STATUT</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"><tr><td colspan="8" class="empty">Chargement…</td></tr></tbody>
+  </table>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+/* ============================================================
+   TRAFFIC.HTML — Vue tableau de l'ensemble du trafic, triable et
+   filtrable. Sélection partagée via /simulation/state/selectedAircraft.
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyBP2q6Wfxz02MfK69BFHx9_FUjDGTmAcw",
+  authDomain: "kykychat-24c7f.firebaseapp.com",
+  databaseURL: "https://kykychat-24c7f-default-rtdb.firebaseio.com",
+  projectId: "kykychat-24c7f",
+  storageBucket: "kykychat-24c7f.firebasestorage.app",
+  messagingSenderId: "342562811927",
+  appId: "1:342562811927:web:0fed1e1f511c4fddcfec52"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const REF = { aircraft: db.ref('simulation/aircraft'), state: db.ref('simulation/state') };
+
+function tickClock(){ document.getElementById('clock').textContent = new Date().toISOString().substr(11,8)+' Z'; }
+setInterval(tickClock,1000); tickClock();
+
+let aircraftData = {};
+let selectedCallsign = null;
+let sortKey = 'callsign';
+let sortAsc = true;
+
+REF.state.child('selectedAircraft').on('value', s => { selectedCallsign = s.val(); render(); });
+REF.aircraft.on('value', s => { aircraftData = s.val() || {}; render(); });
+
+document.querySelectorAll('thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortKey === key) sortAsc = !sortAsc; else { sortKey = key; sortAsc = true; }
+    render();
+  });
+});
+document.getElementById('search').addEventListener('input', render);
+document.getElementById('filter-emg').addEventListener('change', render);
+
+function flFmt(ft){ return 'FL' + Math.round((ft||0)/100).toString().padStart(3,'0'); }
+
+function render(){
+  const tbody = document.getElementById('tbody');
+  const searchVal = document.getElementById('search').value.toLowerCase();
+  const emgOnly = document.getElementById('filter-emg').value === 'emg';
+
+  let rows = Object.values(aircraftData);
+  if (searchVal) rows = rows.filter(ac => (ac.callsign||'').toLowerCase().includes(searchVal) || (ac.type||'').toLowerCase().includes(searchVal));
+  if (emgOnly) rows = rows.filter(ac => ac.emergency && ac.emergency !== 'none');
+
+  rows.sort((a,b) => {
+    let va, vb;
+    if (sortKey === 'route'){ va = (a.origin||'')+(a.destination||''); vb = (b.origin||'')+(b.destination||''); }
+    else { va = a[sortKey]; vb = b[sortKey]; }
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  if (!rows.length){ tbody.innerHTML = '<tr><td colspan="8" class="empty">Aucun avion. Initialisez depuis radar.html.</td></tr>'; return; }
+
+  tbody.innerHTML = rows.map(ac => {
+    const emg = ac.emergency && ac.emergency !== 'none';
+    const sel = ac.callsign === selectedCallsign;
+    return `<tr data-cs="${ac.callsign}" class="${sel?'selected':''} ${emg?'emergency':''}">
+      <td class="cs">${ac.callsign}${emg?`<span class="emg-badge">${ac.emergency}</span>`:''}</td>
+      <td>${ac.type||'—'}</td>
+      <td>${(ac.origin||'?')} → ${(ac.destination||'?')}</td>
+      <td>${flFmt(ac.altitude)}</td>
+      <td>${Math.round(ac.heading||0)}°</td>
+      <td>${Math.round(ac.speed||0)} kt</td>
+      <td>${ac.frequency||'—'}</td>
+      <td>${ac.status||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.addEventListener('click', () => REF.state.child('selectedAircraft').set(tr.dataset.cs));
+  });
+}
+</script>
+</body>
+</html>
