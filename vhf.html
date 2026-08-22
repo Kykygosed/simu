@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VHF — Rennes ACC</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#03070c; --bg-panel:#0a141f; --bg-panel-alt:#0d1826;
+    --border:#1b2c3d; --border-bright:#2a4258;
+    --cyan:#5ad1ff; --cyan-dim:#2f7fa3;
+    --text:#cfe3f2; --text-dim:#5f7f96;
+    --green:#3ecf8e; --amber:#f0a935; --red:#ff4d4d;
+    --font:'JetBrains Mono','IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg-deep);color:var(--text);font-family:var(--font);}
+  #app{display:flex;flex-direction:column;height:100vh;}
+  #topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:var(--bg-panel);border-bottom:1px solid var(--border);}
+  #topbar .title{color:var(--cyan);font-weight:700;font-size:14px;}
+  #clock{color:var(--green);font-weight:600;font-size:13px;}
+
+  #main{flex:1;display:grid;grid-template-columns:280px 1fr;min-height:0;}
+
+  #panel-left{border-right:1px solid var(--border);padding:16px;display:flex;flex-direction:column;gap:16px;overflow-y:auto;}
+  .box{background:var(--bg-panel);border:1px solid var(--border);border-radius:3px;padding:12px;}
+  .box h3{margin:0 0 8px;font-size:11px;color:var(--cyan-dim);letter-spacing:.08em;}
+  .freq-display{font-size:26px;color:var(--green);text-align:center;letter-spacing:.03em;margin-bottom:8px;}
+  select, .lang-select{
+    width:100%;background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--text);
+    font-family:var(--font);padding:6px;border-radius:2px;font-size:12px;
+  }
+  .row{display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:var(--text-dim);}
+  .row b{color:var(--text);}
+
+  /* PTT button */
+  #ptt-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:20px 0;}
+  #ptt{
+    width:150px;height:150px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #14293b, #071119 70%);
+    border:3px solid var(--border-bright);color:var(--cyan);
+    font-family:var(--font);font-weight:700;font-size:14px;letter-spacing:.05em;
+    cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none;
+    box-shadow:0 0 0 rgba(90,209,255,0);transition:box-shadow .15s, border-color .15s;
+  }
+  #ptt.active{
+    border-color:var(--red);color:var(--red);
+    box-shadow:0 0 24px rgba(255,77,77,.5);
+  }
+  #ptt-status{font-size:11px;color:var(--text-dim);min-height:16px;}
+  #ptt-transcript{font-size:12px;color:var(--cyan);min-height:18px;text-align:center;max-width:240px;}
+
+  /* transmission log */
+  #log-panel{padding:16px;display:flex;flex-direction:column;min-height:0;}
+  #log-panel h3{margin:0 0 10px;font-size:12px;color:var(--cyan-dim);letter-spacing:.08em;}
+  #log{flex:1;overflow-y:auto;display:flex;flex-direction:column-reverse;gap:8px;padding-right:4px;}
+  .msg{background:var(--bg-panel);border:1px solid var(--border);border-radius:3px;padding:8px 10px;font-size:12px;}
+  .msg.ctl{border-left:3px solid var(--cyan);}
+  .msg.pilot{border-left:3px solid var(--green);}
+  .msg .who{font-weight:700;font-size:10px;letter-spacing:.05em;margin-bottom:2px;}
+  .msg.ctl .who{color:var(--cyan);}
+  .msg.pilot .who{color:var(--green);}
+  .msg .txt{color:var(--text);}
+  .msg .ts{float:right;color:var(--text-dim);font-size:9px;}
+  .thinking{color:var(--text-dim);font-style:italic;font-size:11px;}
+
+  #vu-wrap{height:6px;background:var(--bg-panel-alt);border-radius:3px;overflow:hidden;margin-top:8px;}
+  #vu{height:100%;width:0%;background:linear-gradient(90deg, var(--green), var(--amber));transition:width .08s;}
+
+  .hint{font-size:10px;color:var(--text-dim);line-height:1.5;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <span class="title">RENNES ACC — VHF</span>
+    <span id="clock">--:--:--</span>
+  </div>
+  <div id="main">
+    <div id="panel-left">
+      <div class="box">
+        <h3>FRÉQUENCE ACTIVE</h3>
+        <div class="freq-display" id="freq-display">127.325</div>
+        <select id="freq-select">
+          <option value="127.325">127.325 — Rennes App</option>
+          <option value="121.500">121.500 — Emergency (GUARD)</option>
+          <option value="118.200">118.200 — Rennes Tower</option>
+          <option value="119.850">119.850 — Brest App</option>
+        </select>
+      </div>
+
+      <div class="box">
+        <h3>AVION SÉLECTIONNÉ</h3>
+        <div id="selected-info">
+          <div class="row"><span>Callsign</span><b id="sel-cs">—</b></div>
+          <div class="row"><span>Fréq. avion</span><b id="sel-freq">—</b></div>
+          <div class="row"><span>Statut</span><b id="sel-status">—</b></div>
+        </div>
+      </div>
+
+      <div class="box">
+        <h3>LANGUE RECONNAISSANCE VOCALE</h3>
+        <select id="lang-select" class="lang-select">
+          <option value="fr-FR">Français</option>
+          <option value="en-US">English</option>
+        </select>
+      </div>
+
+      <div id="ptt-wrap">
+        <button id="ptt">APPUYER
+POUR PARLER</button>
+        <div id="vu-wrap" style="width:150px;"><div id="vu"></div></div>
+        <div id="ptt-status">Prêt</div>
+        <div id="ptt-transcript"></div>
+      </div>
+
+      <div class="hint">Maintenez le bouton PTT enfoncé, parlez votre instruction (contrôleur), relâchez. Le pilote (IA) répond en lecture vocale filtrée radio VHF.</div>
+    </div>
+
+    <div id="log-panel">
+      <h3>JOURNAL DES TRANSMISSIONS — ${new Date? '' : ''}</h3>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+/* ============================================================
+   VHF.HTML — Radio VHF : PTT, reconnaissance vocale (contrôleur),
+   pilote IA (Groq LLM) et synthèse vocale filtrée "radio" (Groq TTS).
+
+   ⚠️ NOTE SÉCURITÉ (lu et accepté par l'utilisateur) :
+   La clé Groq est appelée directement depuis ce fichier client, sans
+   proxy serveur, à la demande explicite de l'utilisateur (usage
+   strictement personnel / mono-utilisateur). Cela signifie que
+   quiconque inspecte le code réseau de la page peut voir et réutiliser
+   cette clé. Si ce site est un jour partagé publiquement, il faudra
+   ajouter un proxy backend pour protéger la clé.
+   ============================================================ */
+
+const GROQ_API_KEY = "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";
+const GROQ_CHAT_MODEL = "llama-3.3-70b-versatile";
+const GROQ_TTS_MODEL = "playai-tts";
+const GROQ_TTS_VOICE = "Atlas-PlayAI";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBP2q6Wfxz02MfK69BFHx9_FUjDGTmAcw",
+  authDomain: "kykychat-24c7f.firebaseapp.com",
+  databaseURL: "https://kykychat-24c7f-default-rtdb.firebaseio.com",
+  projectId: "kykychat-24c7f",
+  storageBucket: "kykychat-24c7f.firebasestorage.app",
+  messagingSenderId: "342562811927",
+  appId: "1:342562811927:web:0fed1e1f511c4fddcfec52"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const REF = { aircraft: db.ref('simulation/aircraft'), state: db.ref('simulation/state') };
+
+function tickClock(){ document.getElementById('clock').textContent = new Date().toISOString().substr(11,8)+' Z'; }
+setInterval(tickClock,1000); tickClock();
+
+// ---------- FRÉQUENCE ----------
+const freqSelect = document.getElementById('freq-select');
+const freqDisplay = document.getElementById('freq-display');
+freqSelect.addEventListener('change', () => {
+  freqDisplay.textContent = freqSelect.value;
+  REF.state.child('activeFrequency').set(freqSelect.value);
+});
+REF.state.child('activeFrequency').on('value', s => {
+  if (s.val()) { freqDisplay.textContent = s.val(); freqSelect.value = s.val(); }
+});
+
+// ---------- AVION SÉLECTIONNÉ ----------
+let selectedCallsign = null;
+let selectedAircraft = null;
+REF.state.child('selectedAircraft').on('value', s => { selectedCallsign = s.val(); updateSelectedPanel(); });
+REF.aircraft.on('value', s => {
+  const all = s.val() || {};
+  selectedAircraft = selectedCallsign ? all[selectedCallsign] : null;
+  updateSelectedPanel();
+});
+function updateSelectedPanel(){
+  document.getElementById('sel-cs').textContent = selectedCallsign || '—';
+  document.getElementById('sel-freq').textContent = selectedAircraft ? (selectedAircraft.frequency||'—') : '—';
+  document.getElementById('sel-status').textContent = selectedAircraft ? (selectedAircraft.emergency && selectedAircraft.emergency !=='none' ? selectedAircraft.emergency.toUpperCase() : (selectedAircraft.status||'—')) : '—';
+}
+
+// ---------- JOURNAL ----------
+function logMessage(who, text, cls){
+  const log = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  const ts = new Date().toISOString().substr(11,8) + 'Z';
+  div.innerHTML = `<span class="ts">${ts}</span><div class="who">${who}</div><div class="txt">${text}</div>`;
+  log.prepend(div);
+}
+
+// ============================================================
+// AUDIO CONTEXT + CHAÎNE D'EFFET RADIO VHF
+// ============================================================
+let audioCtx = null;
+function getAudioCtx(){
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// Génère un court bruit blanc pour le "squelch" (clic d'ouverture/fermeture radio)
+function playSquelchClick(){
+  const ctx = getAudioCtx();
+  const dur = 0.06;
+  const buffer = ctx.createBuffer(1, ctx.sampleRate*dur, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * (1 - i/data.length);
+  const src = ctx.createBufferSource(); src.buffer = buffer;
+  const gain = ctx.createGain(); gain.gain.value = 0.35;
+  src.connect(gain).connect(ctx.destination);
+  src.start();
+}
+
+// Joue un buffer audio décodé à travers une chaîne "radio VHF":
+// bandpass étroit + distorsion douce + compression + bruit de fond léger
+async function playThroughRadioEffect(arrayBuffer){
+  const ctx = getAudioCtx();
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+
+  playSquelchClick();
+  await new Promise(r => setTimeout(r, 90));
+
+  const src = ctx.createBufferSource();
+  src.buffer = audioBuffer;
+
+  const bandpass = ctx.createBiquadFilter();
+  bandpass.type = 'bandpass';
+  bandpass.frequency.value = 1700;
+  bandpass.Q.value = 0.7;
+
+  const highpass = ctx.createBiquadFilter();
+  highpass.type = 'highpass';
+  highpass.frequency.value = 300;
+
+  const waveshaper = ctx.createWaveShaper();
+  waveshaper.curve = makeDistortionCurve(12);
+  waveshaper.oversample = '2x';
+
+  const compressor = ctx.createDynamicsCompressor();
+  compressor.threshold.value = -24; compressor.ratio.value = 8;
+
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = 0.9;
+
+  // bruit de fond léger mixé pendant toute la durée
+  const noiseSrc = makeNoiseSource(ctx, audioBuffer.duration + 0.2);
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.value = 0.02;
+
+  src.connect(highpass).connect(bandpass).connect(waveshaper).connect(compressor).connect(masterGain).connect(ctx.destination);
+  noiseSrc.connect(noiseGain).connect(ctx.destination);
+
+  src.start();
+  noiseSrc.start();
+  src.onended = () => { playSquelchClick(); noiseSrc.stop(); };
+
+  return new Promise(resolve => { src.onended = () => { playSquelchClick(); resolve(); }; });
+}
+
+function makeDistortionCurve(amount){
+  const n = 44100, curve = new Float32Array(n), deg = Math.PI/180;
+  for (let i=0;i<n;i++){ const x = i*2/n - 1; curve[i] = (3+amount)*x*20*deg / (Math.PI + amount*Math.abs(x)); }
+  return curve;
+}
+function makeNoiseSource(ctx, durationSec){
+  const buffer = ctx.createBuffer(1, ctx.sampleRate*durationSec, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i=0;i<data.length;i++) data[i] = Math.random()*2-1;
+  const src = ctx.createBufferSource(); src.buffer = buffer; src.loop = true;
+  return src;
+}
+
+// ============================================================
+// GROQ — TEXTE (réponse pilote) + TTS (voix filtrée radio)
+// ============================================================
+async function generatePilotReply(controllerText){
+  const ac = selectedAircraft || {};
+  const emergencyNote = ac.emergency && ac.emergency !== 'none' ? `L'avion est actuellement en situation d'urgence: ${ac.emergency}.` : '';
+  const sys = `Tu es le pilote de l'avion ${selectedCallsign || 'INCONNU'} (${ac.type||'type inconnu'}), en vol de ${ac.origin||'?'} vers ${ac.destination||'?'}, actuellement au niveau ${Math.round((ac.altitude||0)/100)}, cap ${Math.round(ac.heading||0)}, vitesse ${Math.round(ac.speed||0)} kt. ${emergencyNote}
+Tu réponds au contrôleur aérien en utilisant la phraséologie aéronautique standard (lecture/readback des clairances), de façon brève et professionnelle, comme un vrai pilote de ligne le ferait. Termine toujours ta transmission par ton indicatif. Réponds uniquement avec le texte de la transmission radio, sans aucune mise en forme ni commentaire.`;
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + GROQ_API_KEY },
+    body: JSON.stringify({
+      model: GROQ_CHAT_MODEL,
+      messages: [ { role:'system', content: sys }, { role:'user', content: controllerText } ],
+      temperature: 0.6, max_tokens: 120
+    })
+  });
+  if (!res.ok) throw new Error('Groq chat HTTP ' + res.status + ' — ' + await res.text());
+  const data = await res.json();
+  return data.choices[0].message.content.trim();
+}
+
+async function synthesizeAndPlay(text){
+  const res = await fetch('https://api.groq.com/openai/v1/audio/speech', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + GROQ_API_KEY },
+    body: JSON.stringify({ model: GROQ_TTS_MODEL, input: text, voice: GROQ_TTS_VOICE, response_format:'wav' })
+  });
+  if (!res.ok) throw new Error('Groq TTS HTTP ' + res.status + ' — ' + await res.text());
+  const arrayBuffer = await res.arrayBuffer();
+  await playThroughRadioEffect(arrayBuffer);
+}
+
+// Fallback si Groq TTS échoue: synthèse vocale native du navigateur (moins réaliste, sans filtre radio possible)
+function fallbackBrowserTTS(text){
+  return new Promise(resolve => {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-US'; u.rate = 1.05;
+    u.onend = resolve; u.onerror = resolve;
+    playSquelchClick();
+    speechSynthesis.speak(u);
+  });
+}
+
+// ============================================================
+// PTT + RECONNAISSANCE VOCALE (Web Speech API)
+// ============================================================
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let recognizing = false;
+
+if (!SpeechRecognition) {
+  document.getElementById('ptt-status').textContent = 'Reconnaissance vocale non supportée par ce navigateur (utilisez Chrome).';
+} else {
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+}
+
+const pttBtn = document.getElementById('ptt');
+const langSelect = document.getElementById('lang-select');
+let currentTranscript = '';
+
+function startPTT(){
+  if (!recognition) return;
+  if (!selectedCallsign) { document.getElementById('ptt-status').textContent = 'Sélectionnez un avion (radar/strips) avant de transmettre.'; return; }
+  recognition.lang = langSelect.value;
+  currentTranscript = '';
+  try { recognition.start(); } catch(e) { /* déjà démarré */ }
+  pttBtn.classList.add('active');
+  document.getElementById('ptt-status').textContent = 'Émission… parlez';
+  document.getElementById('ptt-transcript').textContent = '';
+  recognizing = true;
+  animateVU();
+}
+
+function stopPTT(){
+  if (!recognition || !recognizing) return;
+  recognition.stop();
+  pttBtn.classList.remove('active');
+  document.getElementById('ptt-status').textContent = 'Traitement…';
+  recognizing = false;
+  document.getElementById('vu').style.width = '0%';
+}
+
+function animateVU(){
+  if (!recognizing) return;
+  document.getElementById('vu').style.width = (20 + Math.random()*80) + '%';
+  requestAnimationFrame(() => setTimeout(animateVU, 90));
+}
+
+if (recognition){
+  recognition.onresult = (event) => {
+    let interim = '', final = '';
+    for (let i=event.resultIndex; i<event.results.length; i++){
+      if (event.results[i].isFinal) final += event.results[i][0].transcript;
+      else interim += event.results[i][0].transcript;
+    }
+    currentTranscript = (final || interim).trim();
+    document.getElementById('ptt-transcript').textContent = currentTranscript;
+  };
+  recognition.onerror = (e) => {
+    console.error('[STT] erreur', e.error);
+    document.getElementById('ptt-status').textContent = 'Erreur micro: ' + e.error;
+  };
+  recognition.onend = () => { handleTransmissionEnd(); };
+}
+
+pttBtn.addEventListener('mousedown', startPTT);
+pttBtn.addEventListener('touchstart', (e)=>{e.preventDefault(); startPTT();});
+pttBtn.addEventListener('mouseup', stopPTT);
+pttBtn.addEventListener('mouseleave', () => { if (recognizing) stopPTT(); });
+pttBtn.addEventListener('touchend', (e)=>{e.preventDefault(); stopPTT();});
+
+async function handleTransmissionEnd(){
+  const text = currentTranscript.trim();
+  document.getElementById('ptt-status').textContent = 'Prêt';
+  if (!text) return;
+
+  logMessage('CONTRÔLEUR → ' + (selectedCallsign||'?'), text, 'ctl');
+  await REF.aircraft.child(selectedCallsign + '/lastTransmission').set(text);
+  await REF.aircraft.child(selectedCallsign + '/lastTransmissionTime').set(Date.now());
+
+  const thinkingEl = document.createElement('div');
+  thinkingEl.className = 'thinking';
+  thinkingEl.textContent = (selectedCallsign||'?') + ' — réflexion du pilote…';
+  document.getElementById('log').prepend(thinkingEl);
+
+  try {
+    const reply = await generatePilotReply(text);
+    thinkingEl.remove();
+    logMessage(selectedCallsign + ' (pilote)', reply, 'pilot');
+    await REF.aircraft.child(selectedCallsign + '/pilotState').set('replied');
+
+    try {
+      await synthesizeAndPlay(reply);
+    } catch (ttsErr) {
+      console.warn('[TTS Groq] indisponible, fallback navigateur:', ttsErr);
+      await fallbackBrowserTTS(reply);
+    }
+  } catch (err) {
+    thinkingEl.remove();
+    console.error('[Groq] erreur génération réponse pilote:', err);
+    logMessage('SYSTÈME', 'Erreur IA pilote: ' + err.message, 'ctl');
+  }
+}
+</script>
+</body>
+</html>
