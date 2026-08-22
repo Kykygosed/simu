@@ -147,6 +147,11 @@ const REF = {
   events: db.ref('simulation/events'),
 };
 
+// ---------- PROXY OPENSKY (pour contourner le CORS) ----------
+// Remplace par l'URL Render de ton proxy une fois déployé, ex:
+// "https://opensky-proxy-xxxx.onrender.com"
+const OPENSKY_PROXY_URL = "https://REPLACE-WITH-YOUR-RENDER-URL.onrender.com";
+
 // ---------- CONSTANTES ZONE ----------
 // Bounding box Bretagne / Ouest France pour OpenSky
 const BBOX = { latMin: 46.8, latMax: 49.2, lonMin: -5.6, lonMax: -0.2 };
@@ -295,9 +300,13 @@ async function initFromOpenSky(){
   const btn = document.getElementById('btn-init');
   btn.disabled = true; btn.textContent = 'CHARGEMENT…';
   try {
-    const url = `https://opensky-network.org/api/states/all?lamin=${BBOX.latMin}&lomin=${BBOX.lonMin}&lamax=${BBOX.latMax}&lomax=${BBOX.lonMax}`;
+    if (OPENSKY_PROXY_URL.includes('https://simubackend.onrender.com')) {
+      alert("Configure d'abord OPENSKY_PROXY_URL en haut du script (URL Render de ton proxy) — voir opensky-proxy/README.md.");
+      return;
+    }
+    const url = `${OPENSKY_PROXY_URL}/opensky/states?lamin=${BBOX.latMin}&lomin=${BBOX.lonMin}&lamax=${BBOX.latMax}&lomax=${BBOX.lonMax}`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error('OpenSky HTTP ' + res.status);
+    if (!res.ok) throw new Error('Proxy OpenSky HTTP ' + res.status);
     const data = await res.json();
     const states = data.states || [];
     console.log(`[OpenSky] ${states.length} appareils reçus dans la bbox.`);
@@ -344,7 +353,7 @@ async function initFromOpenSky(){
     }
   } catch (err) {
     console.error('[OpenSky] Erreur récupération données:', err);
-    alert("Impossible de récupérer les données OpenSky depuis le navigateur (CORS ou rate limit probable). Voir console. Un proxy serveur minimal peut être nécessaire — voir README.");
+    alert("Impossible de récupérer les données via le proxy OpenSky. Vérifie que le service Render est bien démarré (les instances gratuites s'endorment après inactivité, le premier appel peut prendre ~30s) et que OPENSKY_PROXY_URL est correcte. Voir console pour le détail.");
   } finally {
     btn.disabled = false; btn.textContent = 'INIT DEPUIS OPENSKY';
   }
