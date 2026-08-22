@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPDLC — Rennes ACC</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#03070c; --bg-panel:#0a141f; --bg-panel-alt:#0d1826;
+    --border:#1b2c3d; --border-bright:#2a4258;
+    --cyan:#5ad1ff; --cyan-dim:#2f7fa3;
+    --text:#cfe3f2; --text-dim:#5f7f96;
+    --green:#3ecf8e; --amber:#f0a935; --red:#ff4d4d;
+    --font:'JetBrains Mono','IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg-deep);color:var(--text);font-family:var(--font);}
+  #app{display:flex;flex-direction:column;height:100vh;}
+  #topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:var(--bg-panel);border-bottom:1px solid var(--border);}
+  #topbar .title{color:var(--cyan);font-weight:700;font-size:14px;}
+  #clock{color:var(--green);font-weight:600;font-size:13px;}
+  #sel-bar{padding:6px 16px;background:var(--bg-panel-alt);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-dim);}
+  #sel-bar b{color:var(--cyan);}
+
+  #main{flex:1;display:grid;grid-template-columns:340px 1fr;min-height:0;}
+  #uplink-panel{border-right:1px solid var(--border);padding:14px;overflow-y:auto;}
+  #uplink-panel h3{font-size:11px;color:var(--cyan-dim);letter-spacing:.08em;margin:14px 0 8px;}
+  #uplink-panel h3:first-child{margin-top:0;}
+
+  .msg-btn{
+    display:block;width:100%;text-align:left;background:var(--bg-panel);border:1px solid var(--border-bright);
+    color:var(--text);font-family:var(--font);font-size:11.5px;padding:8px 10px;border-radius:2px;
+    cursor:pointer;margin-bottom:6px;
+  }
+  .msg-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+  .param-row{display:flex;gap:6px;margin-bottom:6px;}
+  .param-row input{flex:1;background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--cyan);font-family:var(--font);padding:6px;border-radius:2px;font-size:12px;}
+
+  #freetext-box{margin-top:6px;}
+  #freetext-box textarea{
+    width:100%;height:60px;background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--text);
+    font-family:var(--font);font-size:12px;padding:8px;border-radius:2px;resize:vertical;
+  }
+  #freetext-box button{margin-top:6px;}
+
+  #log-col{padding:16px;display:flex;flex-direction:column;min-height:0;}
+  #log{flex:1;overflow-y:auto;display:flex;flex-direction:column-reverse;gap:8px;}
+  .msg{background:var(--bg-panel);border:1px solid var(--border);border-radius:3px;padding:10px 12px;font-size:12px;max-width:640px;}
+  .msg.up{border-left:3px solid var(--cyan);}
+  .msg.down{border-left:3px solid var(--green);margin-left:auto;}
+  .msg .who{font-size:10px;font-weight:700;letter-spacing:.05em;margin-bottom:3px;}
+  .msg.up .who{color:var(--cyan);}
+  .msg.down .who{color:var(--green);}
+  .msg .ts{float:right;color:var(--text-dim);font-size:9px;}
+  .status-tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:2px;margin-top:6px;background:var(--bg-panel-alt);color:var(--text-dim);}
+  .thinking{color:var(--text-dim);font-style:italic;font-size:11px;}
+  .empty{color:var(--text-dim);text-align:center;padding:40px;font-size:13px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <span class="title">RENNES ACC — CPDLC</span>
+    <span id="clock">--:--:--</span>
+  </div>
+  <div id="sel-bar">Avion sélectionné: <b id="sel-cs">aucun</b> — les messages uplink sont adressés à cet avion.</div>
+
+  <div id="main">
+    <div id="uplink-panel">
+      <h3>CLAIRANCES PRÉDÉFINIES</h3>
+      <div class="param-row"><input id="p-alt" type="number" placeholder="FL ex: 350"><button class="msg-btn" style="width:auto;" data-tmpl="CLIMB TO FLIGHT LEVEL {alt}">CLIMB TO FL</button></div>
+      <div class="param-row"><input id="p-alt2" type="number" placeholder="FL ex: 240"><button class="msg-btn" style="width:auto;" data-tmpl="DESCEND TO FLIGHT LEVEL {alt2}">DESCEND TO FL</button></div>
+      <div class="param-row"><input id="p-hdg" type="number" placeholder="cap ex: 270"><button class="msg-btn" style="width:auto;" data-tmpl="TURN LEFT HEADING {hdg}">TURN LEFT HDG</button></div>
+      <div class="param-row"><input id="p-hdg2" type="number" placeholder="cap ex: 090"><button class="msg-btn" style="width:auto;" data-tmpl="TURN RIGHT HEADING {hdg2}">TURN RIGHT HDG</button></div>
+      <div class="param-row"><input id="p-spd" type="number" placeholder="kt ex: 250"><button class="msg-btn" style="width:auto;" data-tmpl="MAINTAIN SPEED {spd} KNOTS">MAINTAIN SPEED</button></div>
+      <div class="param-row"><input id="p-freq" type="text" placeholder="freq ex: 121.500"><button class="msg-btn" style="width:auto;" data-tmpl="CONTACT {freq}">CONTACT FREQ</button></div>
+      <button class="msg-btn" data-msg="REPORT POSITION">REPORT POSITION</button>
+      <button class="msg-btn" data-msg="EXPEDITE CLIMB">EXPEDITE CLIMB</button>
+      <button class="msg-btn" data-msg="EXPEDITE DESCENT">EXPEDITE DESCENT</button>
+      <button class="msg-btn" data-msg="CONFIRM ASSIGNED ALTITUDE">CONFIRM ASSIGNED ALTITUDE</button>
+      <button class="msg-btn" data-msg="RESUME OWN NAVIGATION">RESUME OWN NAVIGATION</button>
+      <button class="msg-btn" data-msg="CLEARED FOR APPROACH">CLEARED FOR APPROACH</button>
+      <button class="msg-btn" data-msg="STANDBY">STANDBY</button>
+
+      <h3>MESSAGE LIBRE</h3>
+      <div id="freetext-box">
+        <textarea id="freetext" placeholder="message uplink personnalisé…"></textarea>
+        <button class="msg-btn" id="send-freetext" style="width:auto;">ENVOYER</button>
+      </div>
+    </div>
+
+    <div id="log-col">
+      <div id="log"><div class="empty">Aucun message. Sélectionnez un avion et envoyez une clairance.</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+/* ============================================================
+   CPDLC.HTML — Messagerie datalink texte contrôleur/pilote.
+   Les uplinks prédéfinis ou libres sont envoyés au pilote IA (Groq)
+   qui répond en downlink (WILCO / UNABLE / ROGER + effet appliqué
+   aux valeurs assignées de l'avion). Pas d'audio ici (canal texte).
+   ⚠️ Clé Groq appelée directement côté client, sans proxy — voir
+   vhf.html pour la note de sécurité complète.
+   ============================================================ */
+const GROQ_API_KEY = "gsk_ey5WVOTRVGqxKQ6RquWaWGdyb3FYyourkeyexamplePLACEHOLDER";
+const GROQ_CHAT_MODEL = "llama-3.3-70b-versatile";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBP2q6Wfxz02MfK69BFHx9_FUjDGTmAcw",
+  authDomain: "kykychat-24c7f.firebaseapp.com",
+  databaseURL: "https://kykychat-24c7f-default-rtdb.firebaseio.com",
+  projectId: "kykychat-24c7f",
+  storageBucket: "kykychat-24c7f.firebasestorage.app",
+  messagingSenderId: "342562811927",
+  appId: "1:342562811927:web:0fed1e1f511c4fddcfec52"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const REF = { aircraft: db.ref('simulation/aircraft'), state: db.ref('simulation/state'), cpdlc: db.ref('simulation/cpdlc') };
+
+function tickClock(){ document.getElementById('clock').textContent = new Date().toISOString().substr(11,8)+' Z'; }
+setInterval(tickClock,1000); tickClock();
+
+let selectedCallsign = null;
+let selectedAircraft = null;
+REF.state.child('selectedAircraft').on('value', s => { selectedCallsign = s.val(); document.getElementById('sel-cs').textContent = selectedCallsign || 'aucun'; loadHistory(); });
+REF.aircraft.on('value', s => { const all = s.val()||{}; selectedAircraft = selectedCallsign ? all[selectedCallsign] : null; });
+
+function logEl(who, text, cls, extraTag){
+  const log = document.getElementById('log');
+  if (log.querySelector('.empty')) log.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  const ts = new Date().toISOString().substr(11,8)+'Z';
+  div.innerHTML = `<span class="ts">${ts}</span><div class="who">${who}</div><div class="txt">${text}</div>${extraTag?`<div class="status-tag">${extraTag}</div>`:''}`;
+  log.prepend(div);
+}
+
+function loadHistory(){
+  document.getElementById('log').innerHTML = '<div class="empty">Historique CPDLC non conservé dans ce squelette — utilisez le journal en direct ci-dessous.</div>';
+}
+
+// ---------- construction des messages prédéfinis ----------
+document.querySelectorAll('.msg-btn[data-tmpl]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tmpl = btn.dataset.tmpl;
+    let msg = tmpl;
+    msg = msg.replace('{alt}', document.getElementById('p-alt').value || '???');
+    msg = msg.replace('{alt2}', document.getElementById('p-alt2').value || '???');
+    msg = msg.replace('{hdg}', (document.getElementById('p-hdg').value||'???').padStart(3,'0'));
+    msg = msg.replace('{hdg2}', (document.getElementById('p-hdg2').value||'???').padStart(3,'0'));
+    msg = msg.replace('{spd}', document.getElementById('p-spd').value || '???');
+    msg = msg.replace('{freq}', document.getElementById('p-freq').value || '???');
+    sendUplink(msg);
+  });
+});
+document.querySelectorAll('.msg-btn[data-msg]').forEach(btn => {
+  btn.addEventListener('click', () => sendUplink(btn.dataset.msg));
+});
+document.getElementById('send-freetext').addEventListener('click', () => {
+  const ta = document.getElementById('freetext');
+  if (ta.value.trim()) { sendUplink(ta.value.trim()); ta.value = ''; }
+});
+
+async function sendUplink(message){
+  if (!selectedCallsign){ alert('Sélectionnez un avion (radar / strips / traffic) avant d\'envoyer un message CPDLC.'); return; }
+  logEl('UPLINK → ' + selectedCallsign, message, 'up');
+  await REF.aircraft.child(selectedCallsign + '/lastTransmission').set('[CPDLC] ' + message);
+  await REF.aircraft.child(selectedCallsign + '/lastTransmissionTime').set(Date.now());
+
+  const thinkingEl = document.createElement('div');
+  thinkingEl.className = 'thinking';
+  thinkingEl.textContent = selectedCallsign + ' — traitement du message…';
+  document.getElementById('log').prepend(thinkingEl);
+
+  try {
+    const { reply, statusTag } = await generateDownlink(message);
+    thinkingEl.remove();
+    logEl(selectedCallsign + ' (downlink)', reply, 'down', statusTag);
+
+    // Applique les clairances chiffrées si le message en contient et que le pilote accepte
+    if (statusTag !== 'UNABLE') applyClearanceEffects(message);
+  } catch (err) {
+    thinkingEl.remove();
+    console.error('[CPDLC] erreur Groq:', err);
+    logEl('SYSTÈME', 'Erreur IA pilote: ' + err.message, 'up');
+  }
+}
+
+async function generateDownlink(message){
+  const ac = selectedAircraft || {};
+  const emergencyNote = ac.emergency && ac.emergency !== 'none' ? `L'avion est en situation d'urgence: ${ac.emergency}.` : '';
+  const sys = `Tu es le système CPDLC de bord de l'avion ${selectedCallsign}. Tu reçois un message uplink du contrôle et tu dois répondre par un downlink CPDLC standard: commence obligatoirement par WILCO, UNABLE, ou ROGER (selon la pertinence/faisabilité de la demande), suivi éventuellement d'un très court complément. ${emergencyNote} Réponds uniquement avec le texte du downlink, sans commentaire ni mise en forme.`;
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + GROQ_API_KEY },
+    body: JSON.stringify({
+      model: GROQ_CHAT_MODEL,
+      messages: [ { role:'system', content: sys }, { role:'user', content: message } ],
+      temperature: 0.4, max_tokens: 60
+    })
+  });
+  if (!res.ok) throw new Error('Groq HTTP ' + res.status);
+  const data = await res.json();
+  const reply = data.choices[0].message.content.trim();
+  const statusTag = /^UNABLE/i.test(reply) ? 'UNABLE' : (/^WILCO/i.test(reply) ? 'WILCO' : 'ROGER');
+  return { reply, statusTag };
+}
+
+// Traduit un uplink texte accepté en mise à jour des champs assigned* de l'avion
+function applyClearanceEffects(message){
+  const updates = {};
+  let m;
+  if ((m = message.match(/CLIMB TO FLIGHT LEVEL (\d+)/i)) || (m = message.match(/DESCEND TO FLIGHT LEVEL (\d+)/i))) {
+    updates.assignedAltitude = parseInt(m[1]) * 100;
+  }
+  if ((m = message.match(/TURN (?:LEFT|RIGHT) HEADING (\d+)/i))) {
+    updates.assignedHeading = parseInt(m[1]);
+  }
+  if ((m = message.match(/MAINTAIN SPEED (\d+)/i))) {
+    updates.assignedSpeed = parseInt(m[1]);
+  }
+  if ((m = message.match(/CONTACT ([\d.]+)/i))) {
+    updates.frequency = m[1];
+  }
+  if (Object.keys(updates).length) REF.aircraft.child(selectedCallsign).update(updates);
+}
+</script>
+</body>
+</html>
