@@ -150,7 +150,7 @@ const REF = {
 // ---------- PROXY OPENSKY (pour contourner le CORS) ----------
 // Remplace par l'URL Render de ton proxy une fois déployé, ex:
 // "https://opensky-proxy-xxxx.onrender.com"
-const OPENSKY_PROXY_URL = "https://simubackend.onrender.com.onrender.com";
+const OPENSKY_PROXY_URL = "https://simubackend.onrender.com";
 
 // ---------- CONSTANTES ZONE ----------
 // Bounding box Bretagne / Ouest France pour OpenSky
@@ -300,7 +300,7 @@ async function initFromOpenSky(){
   const btn = document.getElementById('btn-init');
   btn.disabled = true; btn.textContent = 'CHARGEMENT…';
   try {
-    if (OPENSKY_PROXY_URL.includes('https://simubackend.onrender.com')) {
+    if (OPENSKY_PROXY_URL.includes('REPLACE-WITH-YOUR-RENDER-URL')) {
       alert("Configure d'abord OPENSKY_PROXY_URL en haut du script (URL Render de ton proxy) — voir opensky-proxy/README.md.");
       return;
     }
