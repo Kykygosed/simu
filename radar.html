@@ -296,18 +296,43 @@ function renderSidePanel(ac){
 // ============================================================
 document.getElementById('btn-init').addEventListener('click', initFromOpenSky);
 
+async function fetchOpenSkyStates(){
+  const openskyPath = `states/all?lamin=${BBOX.latMin}&lomin=${BBOX.lonMin}&lamax=${BBOX.latMax}&lomax=${BBOX.lonMax}`;
+  const directUrl = `https://opensky-network.org/api/${openskyPath}`;
+
+  // Plusieurs sources tentées dans l'ordre — la première qui répond gagne.
+  // Utile tant qu'on n'a pas identifié une source stable (Render et Cloudflare
+  // Workers ont tous les deux été bloqués/rejetés par OpenSky pour l'instant).
+  const sources = [];
+  if (!OPENSKY_PROXY_URL.includes('REPLACE-WITH-YOUR-RENDER-URL')) {
+    sources.push({ name: 'proxy personnel (Render)', url: `${OPENSKY_PROXY_URL}/opensky/${openskyPath}` });
+  }
+  sources.push({ name: 'corsproxy.io', url: `https://corsproxy.io/?url=${encodeURIComponent(directUrl)}` });
+  sources.push({ name: 'allorigins.win', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}` });
+  sources.push({ name: 'direct (sans proxy)', url: directUrl });
+
+  const errors = [];
+  for (const src of sources) {
+    try {
+      console.log(`[OpenSky] tentative via ${src.name}…`);
+      const res = await fetch(src.url);
+      if (!res.ok) { errors.push(`${src.name}: HTTP ${res.status}`); continue; }
+      const data = await res.json();
+      if (!data || !Array.isArray(data.states)) { errors.push(`${src.name}: réponse inattendue`); continue; }
+      console.log(`[OpenSky] succès via ${src.name}.`);
+      return data;
+    } catch (err) {
+      errors.push(`${src.name}: ${err.message}`);
+    }
+  }
+  throw new Error('Toutes les sources ont échoué — ' + errors.join(' | '));
+}
+
 async function initFromOpenSky(){
   const btn = document.getElementById('btn-init');
   btn.disabled = true; btn.textContent = 'CHARGEMENT…';
   try {
-    if (OPENSKY_PROXY_URL.includes('REPLACE-WITH-YOUR-RENDER-URL')) {
-      alert("Configure d'abord OPENSKY_PROXY_URL en haut du script (URL Render de ton proxy) — voir opensky-proxy/README.md.");
-      return;
-    }
-    const url = `${OPENSKY_PROXY_URL}/opensky/states?lamin=${BBOX.latMin}&lomin=${BBOX.lonMin}&lamax=${BBOX.latMax}&lomax=${BBOX.lonMax}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Proxy OpenSky HTTP ' + res.status);
-    const data = await res.json();
+    const data = await fetchOpenSkyStates();
     const states = data.states || [];
     console.log(`[OpenSky] ${states.length} appareils reçus dans la bbox.`);
 
