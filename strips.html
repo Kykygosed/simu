@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STRIPS — Rennes ACC</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#03070c; --bg-panel:#0a141f; --bg-panel-alt:#0d1826;
+    --border:#1b2c3d; --border-bright:#2a4258;
+    --cyan:#5ad1ff; --cyan-dim:#2f7fa3;
+    --text:#cfe3f2; --text-dim:#5f7f96;
+    --green:#3ecf8e; --amber:#f0a935; --red:#ff4d4d;
+    --font:'JetBrains Mono','IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--bg-deep);color:var(--text);font-family:var(--font);}
+  #topbar{
+    display:flex;align-items:center;justify-content:space-between;padding:8px 16px;
+    background:var(--bg-panel);border-bottom:1px solid var(--border);font-size:13px;position:sticky;top:0;z-index:10;
+  }
+  #topbar .title{color:var(--cyan);font-weight:700;font-size:14px;}
+  #clock{color:var(--green);font-weight:600;}
+
+  #strip-container{padding:14px;display:flex;flex-direction:column;gap:8px;max-width:1200px;margin:0 auto;}
+
+  .strip{
+    background:var(--bg-panel);border:1px solid var(--border);border-left:4px solid var(--cyan-dim);
+    border-radius:2px;padding:10px 12px;display:grid;
+    grid-template-columns:110px 90px 1fr 1fr 1fr 1fr 1.4fr auto;
+    gap:10px;align-items:center;font-size:12px;cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  .strip:hover{border-color:var(--border-bright);}
+  .strip.selected{border-left-color:#fff;background:#0e1c2c;}
+  .strip.emergency{border-left-color:var(--red);background:#1a0a0a;}
+
+  .cs{font-weight:700;color:var(--cyan);font-size:14px;}
+  .type{color:var(--text-dim);font-size:11px;}
+  .field-group{display:flex;flex-direction:column;gap:2px;}
+  .field-group label{font-size:9px;color:var(--text-dim);letter-spacing:.05em;}
+  .field-row{display:flex;gap:4px;align-items:center;}
+  .field-row .cur{color:var(--text-dim);font-size:11px;min-width:34px;}
+  .field-row input{
+    width:64px;background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--cyan);
+    font-family:var(--font);font-size:12px;padding:3px 5px;border-radius:2px;
+  }
+  .field-row input:focus{outline:none;border-color:var(--cyan);}
+  .freetext{display:flex;flex-direction:column;gap:2px;}
+  .freetext input{width:100%;background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--text);
+    font-family:var(--font);font-size:11px;padding:3px 6px;border-radius:2px;}
+  .emg-badge{background:var(--red);color:#1a0000;font-weight:700;font-size:10px;padding:2px 6px;border-radius:2px;margin-left:6px;}
+  .transmit-btn{
+    background:var(--bg-panel-alt);border:1px solid var(--green);color:var(--green);
+    font-family:var(--font);font-size:11px;font-weight:700;letter-spacing:.05em;
+    padding:8px 14px;border-radius:2px;cursor:pointer;white-space:nowrap;
+  }
+  .transmit-btn:hover{background:var(--green);color:#04140c;}
+  .transmit-btn:disabled{opacity:.3;cursor:default;}
+  .flash{animation:flash .5s ease;}
+  @keyframes flash{0%{background:#123a24;}100%{background:transparent;}}
+  .empty{color:var(--text-dim);text-align:center;padding:40px;font-size:13px;}
+  .last-clearance{grid-column:1 / -1;font-size:10px;color:var(--text-dim);border-top:1px dashed #142230;padding-top:6px;margin-top:2px;}
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <span class="title">RENNES ACC — STRIPS</span>
+    <span id="clock">--:--:--</span>
+  </div>
+  <div id="strip-container"><div class="empty">Chargement des strips…</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+/* ============================================================
+   STRIPS.HTML — Bandes de progression de vol éditables
+   Chaque strip reflète /simulation/aircraft/{callsign}
+   Les champs "assigned*" sont modifiables localement puis envoyés
+   d'un coup vers Firebase via le bouton TRANSMIT (clairance groupée).
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyBP2q6Wfxz02MfK69BFHx9_FUjDGTmAcw",
+  authDomain: "kykychat-24c7f.firebaseapp.com",
+  databaseURL: "https://kykychat-24c7f-default-rtdb.firebaseio.com",
+  projectId: "kykychat-24c7f",
+  storageBucket: "kykychat-24c7f.firebasestorage.app",
+  messagingSenderId: "342562811927",
+  appId: "1:342562811927:web:0fed1e1f511c4fddcfec52"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const REF = { aircraft: db.ref('simulation/aircraft'), state: db.ref('simulation/state') };
+
+function tickClock(){ document.getElementById('clock').textContent = new Date().toISOString().substr(11,8) + ' Z'; }
+setInterval(tickClock,1000); tickClock();
+
+let aircraftData = {};
+let selectedCallsign = null;
+let pendingEdits = {};  // callsign -> {field: value} non encore transmis
+let editingFields = new Set(); // callsign+field actuellement en cours de frappe (ne pas écraser)
+
+REF.state.child('selectedAircraft').on('value', s => { selectedCallsign = s.val(); render(); });
+
+REF.aircraft.on('value', snap => {
+  aircraftData = snap.val() || {};
+  render();
+});
+
+function flFmt(ft){ return 'FL' + Math.round((ft||0)/100).toString().padStart(3,'0'); }
+
+function render(){
+  const container = document.getElementById('strip-container');
+  const keys = Object.keys(aircraftData).sort();
+  if (!keys.length){ container.innerHTML = '<div class="empty">Aucun avion. Ouvrez radar.html et cliquez "INIT DEPUIS OPENSKY".</div>'; return; }
+
+  container.innerHTML = keys.map(cs => stripHtml(cs, aircraftData[cs])).join('');
+
+  keys.forEach(cs => {
+    const el = document.getElementById('strip-' + cs);
+    el.addEventListener('click', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+      REF.state.child('selectedAircraft').set(cs);
+    });
+    ['assignedAltitude','assignedHeading','assignedSpeed','directTo'].forEach(field => {
+      const input = document.getElementById(`inp-${cs}-${field}`);
+      if (!input) return;
+      input.addEventListener('focus', () => editingFields.add(cs+field));
+      input.addEventListener('blur', () => editingFields.delete(cs+field));
+      input.addEventListener('input', () => {
+        pendingEdits[cs] = pendingEdits[cs] || {};
+        let v = input.value;
+        if (field === 'assignedAltitude') v = Math.round(parseFloat(v||0) * 100); // saisie en FL -> ft
+        else if (field === 'assignedHeading' || field === 'assignedSpeed') v = parseFloat(v||0);
+        pendingEdits[cs][field] = v;
+      });
+    });
+    const ft = document.getElementById(`freetext-${cs}`);
+    if (ft){
+      ft.addEventListener('focus', () => editingFields.add(cs+'freeText'));
+      ft.addEventListener('blur', () => { editingFields.delete(cs+'freeText'); REF.aircraft.child(cs+'/freeText').set(ft.value); });
+    }
+    const btn = document.getElementById(`transmit-${cs}`);
+    if (btn) btn.addEventListener('click', () => transmit(cs));
+  });
+}
+
+function stripHtml(cs, ac){
+  const emg = ac.emergency && ac.emergency !== 'none';
+  const sel = cs === selectedCallsign;
+  const edits = pendingEdits[cs] || {};
+  const hasPending = Object.keys(edits).length > 0;
+  const altAssignedFL = edits.assignedAltitude != null ? Math.round(edits.assignedAltitude/100) : Math.round((ac.assignedAltitude||0)/100);
+  const hdgAssigned = edits.assignedHeading != null ? edits.assignedHeading : (ac.assignedHeading ?? '');
+  const spdAssigned = edits.assignedSpeed != null ? edits.assignedSpeed : (ac.assignedSpeed ?? '');
+  const directTo = edits.directTo != null ? edits.directTo : (ac.directTo || '');
+
+  return `
+  <div id="strip-${cs}" class="strip ${sel?'selected':''} ${emg?'emergency':''}">
+    <div>
+      <div class="cs">${cs}${emg?`<span class="emg-badge">${ac.emergency}</span>`:''}</div>
+      <div class="type">${ac.type||'—'} ${ac.origin&&ac.destination ? '· '+ac.origin+'→'+ac.destination : ''}</div>
+    </div>
+    <div class="field-group"><label>FRÉQ</label><div>${ac.frequency||'—'}</div></div>
+
+    <div class="field-group">
+      <label>ALTITUDE (FL)</label>
+      <div class="field-row"><span class="cur">${flFmt(ac.altitude)}</span>
+        <input id="inp-${cs}-assignedAltitude" type="number" value="${altAssignedFL}"></div>
+    </div>
+    <div class="field-group">
+      <label>CAP</label>
+      <div class="field-row"><span class="cur">${Math.round(ac.heading||0)}°</span>
+        <input id="inp-${cs}-assignedHeading" type="number" value="${hdgAssigned}"></div>
+    </div>
+    <div class="field-group">
+      <label>VITESSE</label>
+      <div class="field-row"><span class="cur">${Math.round(ac.speed||0)}kt</span>
+        <input id="inp-${cs}-assignedSpeed" type="number" value="${spdAssigned}"></div>
+    </div>
+    <div class="field-group">
+      <label>DIRECT TO</label>
+      <div class="field-row"><input id="inp-${cs}-directTo" type="text" value="${directTo}" style="width:80px;"></div>
+    </div>
+    <div class="freetext">
+      <label style="font-size:9px;color:var(--text-dim);">FREE TEXT / REMARQUES</label>
+      <input id="freetext-${cs}" type="text" value="${(ac.freeText||'').replace(/"/g,'&quot;')}" placeholder="remarques libres…">
+    </div>
+    <button id="transmit-${cs}" class="transmit-btn" ${hasPending?'':'disabled'}>TRANSMIT</button>
+    ${ac.lastClearance ? `<div class="last-clearance">Dernière clairance: "${ac.lastClearance}" — ${ac.lastClearanceTime ? new Date(ac.lastClearanceTime).toISOString().substr(11,8)+'Z':''}</div>` : ''}
+  </div>`;
+}
+
+async function transmit(cs){
+  const edits = pendingEdits[cs];
+  if (!edits) return;
+  const updates = {};
+  const parts = [];
+  if (edits.assignedAltitude != null){ updates['assignedAltitude'] = edits.assignedAltitude; parts.push('CLIMB/DESCEND TO FL'+Math.round(edits.assignedAltitude/100)); }
+  if (edits.assignedHeading != null){ updates['assignedHeading'] = edits.assignedHeading; parts.push('TURN HEADING '+edits.assignedHeading); }
+  if (edits.assignedSpeed != null){ updates['assignedSpeed'] = edits.assignedSpeed; parts.push('SPEED '+edits.assignedSpeed); }
+  if (edits.directTo != null && edits.directTo !== ''){ updates['directTo'] = edits.directTo; parts.push('DIRECT TO '+edits.directTo); }
+  updates['lastClearance'] = parts.join(', ');
+  updates['lastClearanceTime'] = Date.now();
+  await REF.aircraft.child(cs).update(updates);
+  delete pendingEdits[cs];
+  const el = document.getElementById('strip-' + cs);
+  if (el){ el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'), 500); }
+}
+</script>
+</body>
+</html>
