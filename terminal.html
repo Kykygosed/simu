@@ -5,14 +5,11 @@
 <title>LFRS · Tableau des vols &amp; radar</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
-  @import url('https://cdnjs.cloudflare.com/ajax/libs/font-logos/1.2.0/font-logos.min.css');
-
   :root{
     --board-bg-1:#0b1a33;
     --board-bg-2:#050d1c;
     --yellow:#ffcf00;
     --yellow-dim:#c9a300;
-    --red:#c8102e;
     --panel-line:#1c3a5e;
     --row-a:#0e2140;
     --row-b:#0a1830;
@@ -32,7 +29,6 @@
   }
   .wrap{max-width:1400px;margin:0 auto;padding:18px 18px 40px;}
 
-  /* ---- Top strip: airport name / clock ---- */
   .topbar{
     display:flex;justify-content:space-between;align-items:center;
     padding:10px 18px;margin-bottom:14px;
@@ -49,7 +45,6 @@
   .topbar .clock{font-variant-numeric:tabular-nums;font-size:20px;font-weight:700;letter-spacing:2px;color:var(--white);}
   .topbar .date{font-size:11px;color:var(--text-dim);letter-spacing:1px;margin-left:10px;}
 
-  /* ---- Config bar (API key) ---- */
   .config{
     display:flex;gap:8px;align-items:center;flex-wrap:wrap;
     background:#0a1424;border:1px solid #1e3352;border-radius:6px;
@@ -69,7 +64,6 @@
   .config .status.err{color:#ff6b6b;}
   .config a{color:var(--yellow);}
 
-  /* ---- View toggle indicator ---- */
   .viewSwitch{
     display:flex;align-items:center;gap:10px;justify-content:center;
     margin-bottom:14px;font-size:11px;letter-spacing:1.5px;color:var(--text-dim);
@@ -80,10 +74,8 @@
   .viewSwitch .lbl{padding:3px 10px;border-radius:20px;transition:.3s;}
   .viewSwitch .lbl.active{color:#101a2b;background:var(--yellow);}
 
-  .viewpane{transition:opacity .4s ease;}
   .viewpane.hidden{display:none;}
 
-  /* ---- Boards grid: 2 panels side by side ---- */
   .boards{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
   @media (max-width:900px){.boards{grid-template-columns:1fr;}}
 
@@ -162,7 +154,6 @@
 
   .footer-note{margin-top:14px;font-size:10.5px;color:#3f5a80;text-align:center;letter-spacing:.5px;}
 
-  /* ---- Radar panel ---- */
   .radarPanel{
     background:linear-gradient(180deg,var(--board-bg-1),var(--board-bg-2));
     border:1px solid var(--panel-line);border-radius:6px;overflow:hidden;
@@ -174,12 +165,11 @@
   .leaflet-control-attribution a{color:var(--cyan) !important;}
   .leaflet-control-zoom a{background:#0a1424 !important;color:var(--white) !important;border-color:#1e3352 !important;}
 
-  /* Aircraft marker: plain text, no bubble */
   .ac-marker{display:flex;align-items:flex-start;gap:5px;pointer-events:none;white-space:nowrap;}
   .ac-icon{
     font-size:15px;line-height:1;color:var(--yellow);
     text-shadow:0 0 3px #000,0 0 6px rgba(0,0,0,.9);
-    transform-origin:center;
+    transform-origin:center;display:inline-block;
   }
   .ac-label{font-size:10.5px;line-height:1.25;font-weight:700;color:var(--cyan);
     text-shadow:0 0 3px #000,0 1px 2px #000,0 0 8px rgba(0,0,0,.9);
@@ -190,6 +180,8 @@
   .ac-label .l3{color:#ffb35b;}
 
   .footer-note.radar{margin-top:0;padding:10px 14px;background:#0a1424;border-top:1px solid #1e3352;text-align:left;}
+  .radarNotice{padding:10px 14px;font-size:11px;color:#ff9d9d;background:#2a0f14;border-bottom:1px solid #3a0f14;display:none;}
+  .radarNotice.show{display:block;}
 </style>
 </head>
 <body>
@@ -277,8 +269,9 @@
         <h2>Radar trafic aérien — Bretagne</h2>
         <div class="sub" id="radarMeta">—</div>
       </div>
+      <div class="radarNotice" id="radarNotice"></div>
       <div id="radarMap"></div>
-      <div class="footer-note radar">Données : OpenSky Network (positions live) · Types avions : hexdb.io (best-effort) · Routes : OpenSky routes (best-effort) · Actualisation toutes les 20 s</div>
+      <div class="footer-note radar">Données : adsb.lol (positions ADS-B en direct) · Routes : OpenSky (best-effort) · Actualisation toutes les 15 s</div>
     </div>
   </div>
 
@@ -287,14 +280,12 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 /* ============================================================
-   SHARED: clock
+   SHARED
    ============================================================ */
+function pad(n){return String(n).padStart(2,'0');}
 function tickClock(){
   const now = new Date();
-  const hh = String(now.getHours()).padStart(2,'0');
-  const mm = String(now.getMinutes()).padStart(2,'0');
-  const ss = String(now.getSeconds()).padStart(2,'0');
-  document.getElementById('clock').textContent = `${hh}:${mm}:${ss}`;
+  document.getElementById('clock').textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   const days = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
   const months = ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
   document.getElementById('dateline').textContent =
@@ -302,7 +293,6 @@ function tickClock(){
 }
 tickClock();
 setInterval(tickClock, 1000);
-function pad(n){return String(n).padStart(2,'0');}
 
 /* ============================================================
    VIEW TOGGLE (board <-> radar every 15s)
@@ -314,6 +304,7 @@ const dotRadar = document.getElementById('dotRadar');
 const lblBoard = document.getElementById('lblBoard');
 const lblRadar = document.getElementById('lblRadar');
 let showingBoard = true;
+let radarInitialized = false;
 
 function applyView(){
   viewBoard.classList.toggle('hidden', !showingBoard);
@@ -323,8 +314,12 @@ function applyView(){
   lblBoard.classList.toggle('active', showingBoard);
   lblRadar.classList.toggle('active', !showingBoard);
   if(!showingBoard){
-    // Leaflet needs a resize kick the first time its container becomes visible
-    setTimeout(()=>{ if(window.radarMapInstance) window.radarMapInstance.invalidateSize(); }, 60);
+    if(!radarInitialized){
+      initRadarMap();
+      radarInitialized = true;
+    } else {
+      setTimeout(()=>{ if(window.radarMapInstance) window.radarMapInstance.invalidateSize(); }, 50);
+    }
   }
 }
 applyView();
@@ -531,34 +526,39 @@ document.getElementById('connectBtn').addEventListener('click', ()=>{
 })();
 
 /* ============================================================
-   VIEW 2: RADAR (Leaflet + OpenSky Network) — centered on Bretagne
+   VIEW 2: RADAR (Leaflet + adsb.lol) — centered on Bretagne
    ============================================================ */
-const BBOX = { lamin: 46.9, lomin: -5.6, lamax: 49.1, lomax: -0.6 }; // Bretagne + approaches
-const radarMap = L.map('radarMap', {
-  zoomControl:true,
-  attributionControl:true,
-  minZoom:6, maxZoom:11
-}).setView([48.15, -3.0], 8);
-window.radarMapInstance = radarMap;
-
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution:'&copy; OpenStreetMap &copy; CARTO',
-  subdomains:'abcd', maxZoom:19
-}).addTo(radarMap);
-
+const RADAR_CENTER = [48.15, -3.0];
+const RADAR_RADIUS_NM = 150; // covers Bretagne + approaches, adsb.lol max is 250nm
 const radarMeta = document.getElementById('radarMeta');
+const radarNotice = document.getElementById('radarNotice');
 
-// caches
-const typeCache = {};   // icao24 -> "B38M" | null
-const routeCache = {};  // callsign -> "DEP-ARR" | null
-const markers = {};     // icao24 -> L.marker
+const markers = {};     // hex -> L.marker
+const routeCache = {};  // callsign -> "DEP → ARR" | null
 
-function msToKt(v){ return v==null ? null : Math.round(v * 1.94384); }
-function mToFt(v){ return v==null ? null : Math.round(v * 3.28084); }
+function initRadarMap(){
+  const map = L.map('radarMap', {
+    zoomControl:true,
+    attributionControl:true,
+    minZoom:6, maxZoom:11
+  }).setView(RADAR_CENTER, 8);
+  window.radarMapInstance = map;
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution:'&copy; OpenStreetMap &copy; CARTO',
+    subdomains:'abcd', maxZoom:19
+  }).addTo(map);
+
+  setTimeout(()=>map.invalidateSize(), 100);
+
+  refreshRadar();
+  setInterval(refreshRadar, 15000);
+}
 
 function planeIconHtml(track, callsign, type, altFt, spdKt, onGround, route){
   const rot = (track==null ? 0 : track);
-  const l1 = `${(callsign||'—').trim()}${type ? ' '+type : ''}`;
+  const cs = (callsign||'—').trim() || '—';
+  const l1 = `${cs}${type ? ' '+type : ''}`;
   const l2 = onGround ? 'AU SOL' : `${altFt!=null?altFt+' ft':'—'}   ${spdKt!=null?spdKt+' kt':'—'}`;
   const l3 = route ? route : '';
   return `<div class="ac-marker">
@@ -569,20 +569,6 @@ function planeIconHtml(track, callsign, type, altFt, spdKt, onGround, route){
         ${l3 ? `<div class="l3">${l3}</div>` : ''}
       </div>
     </div>`;
-}
-
-async function fetchAircraftType(icao24){
-  if(icao24 in typeCache) return typeCache[icao24];
-  typeCache[icao24] = null; // mark as in-flight to avoid duplicate fetches
-  try{
-    const res = await fetch(`https://hexdb.io/api/v1/aircraft/${icao24}`);
-    if(res.ok){
-      const data = await res.json();
-      const t = data && (data.ICAOTypeCode || data.Type) ? (data.ICAOTypeCode || data.Type) : null;
-      typeCache[icao24] = t || null;
-    }
-  }catch(e){ /* best-effort, ignore */ }
-  return typeCache[icao24];
 }
 
 async function fetchRoute(callsign){
@@ -602,89 +588,76 @@ async function fetchRoute(callsign){
   return routeCache[cs];
 }
 
-let enrichQueue = [];
-let enrichBusy = false;
-function queueEnrich(icao24, callsign){
-  enrichQueue.push({icao24, callsign});
-  if(!enrichBusy) drainEnrichQueue();
+let routeQueue = [];
+let routeBusy = false;
+function queueRoute(hex, callsign){
+  const cs = (callsign||'').trim();
+  if(!cs || cs in routeCache) return;
+  routeQueue.push({hex, callsign: cs});
+  if(!routeBusy) drainRouteQueue();
 }
-async function drainEnrichQueue(){
-  enrichBusy = true;
-  while(enrichQueue.length){
-    const {icao24, callsign} = enrichQueue.shift();
-    const needsType = !(icao24 in typeCache);
-    const needsRoute = callsign && !((callsign.trim()) in routeCache);
-    if(needsType) await fetchAircraftType(icao24);
-    if(needsRoute) await fetchRoute(callsign);
-    if(needsType || needsRoute){
-      updateMarkerContent(icao24, callsign);
-      await new Promise(r=>setTimeout(r, 250)); // be gentle with free APIs
+async function drainRouteQueue(){
+  routeBusy = true;
+  while(routeQueue.length){
+    const {hex, callsign} = routeQueue.shift();
+    if(!(callsign in routeCache)){
+      await fetchRoute(callsign);
+      const m = markers[hex];
+      if(m && m._lastData){
+        const d = m._lastData;
+        m.setIcon(L.divIcon({className:'', html: planeIconHtml(d.track, d.callsign, d.type, d.altFt, d.spdKt, d.onGround, routeCache[callsign]), iconSize:[1,1], iconAnchor:[8,8]}));
+      }
+      await new Promise(r=>setTimeout(r, 300));
     }
   }
-  enrichBusy = false;
-}
-
-const lastState = {}; // icao24 -> raw state row, so we can re-render after enrichment
-
-function updateMarkerContent(icao24, callsign){
-  const s = lastState[icao24];
-  const m = markers[icao24];
-  if(!s || !m) return;
-  const type = typeCache[icao24];
-  const route = routeCache[(callsign||'').trim()];
-  const icon = L.divIcon({
-    className:'',
-    html: planeIconHtml(s.true_track, s.callsign, type, mToFt(s.baro_altitude ?? s.geo_altitude), msToKt(s.velocity), s.on_ground, route),
-    iconSize:[1,1], iconAnchor:[8,8]
-  });
-  m.setIcon(icon);
+  routeBusy = false;
 }
 
 async function refreshRadar(){
   radarMeta.textContent = 'Actualisation…';
   try{
-    const url = `https://opensky-network.org/api/states/all?lamin=${BBOX.lamin}&lomin=${BBOX.lomin}&lamax=${BBOX.lamax}&lomax=${BBOX.lomax}`;
+    const url = `https://api.adsb.lol/v2/point/${RADAR_CENTER[0]}/${RADAR_CENTER[1]}/${RADAR_RADIUS_NM}`;
     const res = await fetch(url);
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const states = data.states || [];
+    const list = data.ac || [];
 
+    radarNotice.classList.remove('show');
     const seen = new Set();
     let count = 0;
-    for(const row of states){
-      const [icao24, callsign, origin_country, time_position, last_contact,
-             longitude, latitude, baro_altitude, on_ground, velocity,
-             true_track, vertical_rate, sensors, geo_altitude, squawk, spi, position_source] = row;
-      if(latitude == null || longitude == null) continue;
+
+    for(const a of list){
+      if(a.lat == null || a.lon == null) continue;
+      const hex = a.hex;
+      seen.add(hex);
       count++;
-      seen.add(icao24);
 
-      const stateObj = {icao24, callsign, baro_altitude, geo_altitude, on_ground, velocity, true_track, last_contact};
-      lastState[icao24] = stateObj;
-
-      const type = typeCache[icao24];
+      const onGround = a.alt_baro === 'ground' || a.ground === true;
+      const altFt = (!onGround && typeof a.alt_baro === 'number') ? Math.round(a.alt_baro) : (!onGround && typeof a.alt_geom === 'number' ? Math.round(a.alt_geom) : null);
+      const spdKt = typeof a.gs === 'number' ? Math.round(a.gs) : null;
+      const track = typeof a.track === 'number' ? a.track : (typeof a.true_heading === 'number' ? a.true_heading : 0);
+      const callsign = a.flight || '';
+      const type = a.t || '';
       const route = routeCache[(callsign||'').trim()];
-      const html = planeIconHtml(true_track, callsign, type, mToFt(baro_altitude ?? geo_altitude), msToKt(velocity), on_ground, route);
+
+      const html = planeIconHtml(track, callsign, type, altFt, spdKt, onGround, route);
       const icon = L.divIcon({className:'', html, iconSize:[1,1], iconAnchor:[8,8]});
 
-      if(markers[icao24]){
-        markers[icao24].setLatLng([latitude, longitude]);
-        markers[icao24].setIcon(icon);
+      if(markers[hex]){
+        markers[hex].setLatLng([a.lat, a.lon]);
+        markers[hex].setIcon(icon);
       } else {
-        markers[icao24] = L.marker([latitude, longitude], {icon, interactive:false}).addTo(radarMap);
+        markers[hex] = L.marker([a.lat, a.lon], {icon, interactive:false}).addTo(window.radarMapInstance);
       }
+      markers[hex]._lastData = {track, callsign, type, altFt, spdKt, onGround};
 
-      if(!(icao24 in typeCache) || (callsign && !((callsign.trim()) in routeCache))){
-        queueEnrich(icao24, callsign);
-      }
+      if(callsign.trim()) queueRoute(hex, callsign);
     }
 
-    // remove markers for aircraft that left the bbox
     for(const id in markers){
       if(!seen.has(id)){
-        radarMap.removeLayer(markers[id]);
+        window.radarMapInstance.removeLayer(markers[id]);
         delete markers[id];
-        delete lastState[id];
       }
     }
 
@@ -692,12 +665,11 @@ async function refreshRadar(){
     radarMeta.textContent = `${count} avions · MAJ ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   }catch(err){
     console.error(err);
-    radarMeta.textContent = `Erreur OpenSky (${err.message}) — nouvelle tentative au prochain cycle.`;
+    radarMeta.textContent = `Erreur adsb.lol (${err.message})`;
+    radarNotice.textContent = `Impossible de récupérer les positions (${err.message}). Nouvelle tentative au prochain cycle — la carte elle-même reste affichée.`;
+    radarNotice.classList.add('show');
   }
 }
-
-refreshRadar();
-setInterval(refreshRadar, 20000);
 </script>
 </body>
 </html>
