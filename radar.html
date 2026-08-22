@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RADAR — Rennes ACC</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    --bg-deep:#03070c;
+    --bg-panel:#0a141f;
+    --bg-panel-alt:#0d1826;
+    --border:#1b2c3d;
+    --border-bright:#2a4258;
+    --cyan:#5ad1ff;
+    --cyan-dim:#2f7fa3;
+    --text:#cfe3f2;
+    --text-dim:#5f7f96;
+    --green:#3ecf8e;
+    --amber:#f0a935;
+    --red:#ff4d4d;
+    --font:'JetBrains Mono','IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg-deep);color:var(--text);font-family:var(--font);overflow:hidden;}
+  #app{display:flex;flex-direction:column;height:100vh;}
+
+  /* Top bar */
+  #topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:8px 16px;background:var(--bg-panel);border-bottom:1px solid var(--border);
+    font-size:13px;letter-spacing:0.05em;z-index:1000;
+  }
+  #topbar .title{color:var(--cyan);font-weight:700;font-size:14px;}
+  #topbar .sub{color:var(--text-dim);margin-left:8px;}
+  #topbar .right{display:flex;align-items:center;gap:18px;}
+  #topbar button{
+    background:var(--bg-panel-alt);border:1px solid var(--border-bright);color:var(--cyan);
+    font-family:var(--font);font-size:11px;letter-spacing:.08em;padding:6px 12px;cursor:pointer;border-radius:2px;
+  }
+  #topbar button:hover{border-color:var(--cyan);}
+  #topbar button.danger{color:var(--red);border-color:#5a2222;}
+  #clock{color:var(--green);font-weight:600;}
+  #status-dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim);display:inline-block;margin-right:6px;}
+  #status-dot.master{background:var(--green);box-shadow:0 0 6px var(--green);}
+
+  /* Main area */
+  #main{flex:1;display:flex;min-height:0;}
+  #map{flex:1;background:#020408;}
+  .leaflet-container{background:#020408;}
+
+  /* Side panel: selected aircraft quick info */
+  #side{
+    width:300px;background:var(--bg-panel);border-left:1px solid var(--border);
+    padding:14px;font-size:12px;overflow-y:auto;
+  }
+  #side h2{font-size:12px;color:var(--cyan-dim);letter-spacing:.1em;margin:0 0 10px;border-bottom:1px solid var(--border);padding-bottom:6px;}
+  .row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dashed #142230;}
+  .row .k{color:var(--text-dim);}
+  .row .v{color:var(--text);font-weight:600;}
+  .empty-hint{color:var(--text-dim);font-size:11px;line-height:1.5;}
+  .emg-banner{background:#2a0a0a;border:1px solid var(--red);color:var(--red);padding:6px 8px;margin-bottom:10px;font-weight:700;font-size:11px;letter-spacing:.05em;}
+
+  /* Aircraft marker */
+  .ac-icon{position:relative;}
+  .ac-glyph{
+    width:14px;height:14px;
+    transform-origin:center center;
+  }
+  .ac-label{
+    position:absolute;left:14px;top:-6px;white-space:nowrap;
+    font-size:10px;line-height:1.25;color:var(--cyan);text-shadow:0 0 3px #000, 0 0 6px #000;
+    font-weight:600;pointer-events:none;
+  }
+  .ac-label .fl{color:var(--text);}
+  .ac-label.selected{color:#fff;}
+  .ac-icon.emergency .ac-glyph{filter:drop-shadow(0 0 4px var(--red));}
+  .ac-icon.emergency .ac-label{color:var(--red);}
+
+  #footer{
+    padding:4px 16px;background:var(--bg-panel);border-top:1px solid var(--border);
+    font-size:10px;color:var(--text-dim);display:flex;justify-content:space-between;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div>
+      <span class="title">RENNES ACC — RADAR</span>
+      <span class="sub">Bretagne / Ouest France</span>
+    </div>
+    <div class="right">
+      <span><span id="status-dot"></span><span id="status-text" class="sub">connexion…</span></span>
+      <span id="clock">--:--:--</span>
+      <button id="btn-init">INIT DEPUIS OPENSKY</button>
+      <button id="btn-fullscreen">PLEIN ÉCRAN</button>
+      <button id="btn-reset" class="danger">RESET SIMULATION</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="map"></div>
+    <div id="side">
+      <h2>AVION SÉLECTIONNÉ</h2>
+      <div id="side-content"><div class="empty-hint">Cliquez un avion sur le radar pour afficher ses informations. La sélection est partagée avec toutes les autres pages (strips, traffic, VHF, CPDLC).</div></div>
+    </div>
+  </div>
+
+  <div id="footer">
+    <span id="ac-count">0 avion(s) actif(s)</span>
+    <span id="engine-status">moteur: inactif</span>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ============================================================
+   RADAR.HTML — Écran radar principal du Centre
+   - Carte Leaflet centrée Bretagne / Ouest France
+   - Synchronisation Firebase RTDB (source de vérité partagée)
+   - Initialisation du trafic depuis OpenSky (situation de départ uniquement)
+   - Moteur de simulation "master" (une seule instance radar.html doit
+     faire tourner le moteur à la fois -> lock via heartbeat Firebase)
+   ============================================================ */
+
+// ---------- FIREBASE ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyBP2q6Wfxz02MfK69BFHx9_FUjDGTmAcw",
+  authDomain: "kykychat-24c7f.firebaseapp.com",
+  databaseURL: "https://kykychat-24c7f-default-rtdb.firebaseio.com",
+  projectId: "kykychat-24c7f",
+  storageBucket: "kykychat-24c7f.firebasestorage.app",
+  messagingSenderId: "342562811927",
+  appId: "1:342562811927:web:0fed1e1f511c4fddcfec52"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const REF = {
+  state: db.ref('simulation/state'),
+  aircraft: db.ref('simulation/aircraft'),
+  strips: db.ref('simulation/strips'),
+  events: db.ref('simulation/events'),
+};
+
+// ---------- CONSTANTES ZONE ----------
+// Bounding box Bretagne / Ouest France pour OpenSky
+const BBOX = { latMin: 46.8, latMax: 49.2, lonMin: -5.6, lonMax: -0.2 };
+const MAP_CENTER = [48.15, -2.6];
+
+// Aérodromes principaux affichés en repère
+const AIRPORTS = [
+  { code:'LFRN', name:'Rennes', lat:48.0695, lon:-1.7346 },
+  { code:'LFRB', name:'Brest', lat:48.4479, lon:-4.4185 },
+  { code:'LFRH', name:'Lorient', lat:47.7608, lon:-3.4400 },
+  { code:'LFRQ', name:'Quimper', lat:47.9749, lon:-4.1678 },
+  { code:'LFRS', name:'Nantes', lat:47.1532, lon:-1.6108 },
+  { code:'LFPG', name:'Paris CDG', lat:49.0097, lon:2.5479 },
+];
+
+// ---------- ÉTAT LOCAL ----------
+let aircraftData = {};      // miroir local de /simulation/aircraft
+let markers = {};           // callsign -> {marker, glyphEl, labelEl}
+let selectedCallsign = null;
+let isMaster = false;
+const instanceId = 'radar-' + Math.random().toString(36).slice(2, 9);
+
+// ---------- CARTE ----------
+const map = L.map('map', { zoomControl:true, attributionControl:false }).setView(MAP_CENTER, 8);
+
+// Fond de carte sobre (CartoDB dark, lisible et professionnel)
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  maxZoom: 12, minZoom: 5
+}).addTo(map);
+
+AIRPORTS.forEach(ap => {
+  L.circleMarker([ap.lat, ap.lon], { radius:4, color:'#2f7fa3', weight:1, fillColor:'#5ad1ff', fillOpacity:0.6 })
+    .addTo(map)
+    .bindTooltip(ap.code, { permanent:true, direction:'right', className:'apt-tooltip', offset:[6,0] });
+});
+
+// ---------- HORLOGE ----------
+function tickClock(){
+  document.getElementById('clock').textContent = new Date().toISOString().substr(11,8) + ' Z';
+}
+setInterval(tickClock, 1000); tickClock();
+
+// ---------- CONNEXION FIREBASE ----------
+db.ref('.info/connected').on('value', snap => {
+  const ok = snap.val() === true;
+  document.getElementById('status-dot').classList.toggle('master', ok);
+  document.getElementById('status-text').textContent = ok ? 'connecté' : 'reconnexion…';
+});
+
+// ---------- ICÔNE AVION (SVG triangle orienté) ----------
+function acSvg(color){
+  return `<svg class="ac-glyph" viewBox="0 0 24 24"><polygon points="12,2 20,20 12,15 4,20" fill="${color}" stroke="#00131c" stroke-width="1"/></svg>`;
+}
+
+function colorFor(ac){
+  if (ac.emergency && ac.emergency !== 'none') return '#ff4d4d';
+  if (selectedCallsign === ac.callsign) return '#ffffff';
+  return '#5ad1ff';
+}
+
+function flLabel(ac){
+  const alt = Number(ac.altitude || 0);
+  return 'FL' + Math.round(alt/100).toString().padStart(3,'0');
+}
+
+function upsertMarker(cs, ac){
+  if (ac.lat == null || ac.lon == null) return;
+  const icon = L.divIcon({
+    className: 'ac-icon' + (ac.emergency && ac.emergency !== 'none' ? ' emergency' : ''),
+    html: `${acSvg(colorFor(ac))}<div class="ac-label ${selectedCallsign===cs?'selected':''}">${cs}<br><span class="fl">${flLabel(ac)}</span></div>`,
+    iconSize:[14,14], iconAnchor:[7,7]
+  });
+
+  if (markers[cs]) {
+    markers[cs].setLatLng([ac.lat, ac.lon]);
+    markers[cs].setIcon(icon);
+  } else {
+    const m = L.marker([ac.lat, ac.lon], { icon }).addTo(map);
+    m.on('click', () => selectAircraft(cs));
+    markers[cs] = m;
+  }
+  // orientation du glyph selon le cap
+  requestAnimationFrame(() => {
+    const el = markers[cs].getElement();
+    if (el) {
+      const glyph = el.querySelector('.ac-glyph');
+      if (glyph) glyph.style.transform = `rotate(${ac.heading || 0}deg)`;
+    }
+  });
+}
+
+function removeStaleMarkers(currentKeys){
+  Object.keys(markers).forEach(cs => {
+    if (!currentKeys.includes(cs)) { map.removeLayer(markers[cs]); delete markers[cs]; }
+  });
+}
+
+// ---------- ÉCOUTE FIREBASE: AVIONS ----------
+REF.aircraft.on('value', snap => {
+  aircraftData = snap.val() || {};
+  const keys = Object.keys(aircraftData);
+  keys.forEach(cs => upsertMarker(cs, aircraftData[cs]));
+  removeStaleMarkers(keys);
+  document.getElementById('ac-count').textContent = keys.length + ' avion(s) actif(s)';
+  if (selectedCallsign) renderSidePanel(aircraftData[selectedCallsign]);
+});
+
+// ---------- SÉLECTION PARTAGÉE ----------
+function selectAircraft(cs){
+  REF.state.child('selectedAircraft').set(cs);
+}
+REF.state.child('selectedAircraft').on('value', snap => {
+  selectedCallsign = snap.val();
+  // re-render labels (mise en évidence)
+  Object.keys(aircraftData).forEach(cs => upsertMarker(cs, aircraftData[cs]));
+  renderSidePanel(aircraftData[selectedCallsign]);
+});
+
+function renderSidePanel(ac){
+  const el = document.getElementById('side-content');
+  if (!ac){
+    el.innerHTML = '<div class="empty-hint">Aucun avion sélectionné.</div>';
+    return;
+  }
+  const emg = ac.emergency && ac.emergency !== 'none';
+  el.innerHTML = (emg ? `<div class="emg-banner">⚠ ${ac.emergency.toUpperCase()}</div>` : '') + [
+    ['Callsign', ac.callsign || '—'],
+    ['Type', ac.type || '—'],
+    ['Origine → Dest.', (ac.origin||'?') + ' → ' + (ac.destination||'?')],
+    ['Altitude', flLabel(ac) + '  (assignée ' + (ac.assignedAltitude ? 'FL'+Math.round(ac.assignedAltitude/100) : '—') + ')'],
+    ['Cap', Math.round(ac.heading||0)+'°  (assigné ' + (ac.assignedHeading ?? '—') + ')'],
+    ['Vitesse', Math.round(ac.speed||0)+' kt (assignée ' + (ac.assignedSpeed ?? '—') + ')'],
+    ['Vertical rate', Math.round(ac.verticalRate||0)+' ft/min'],
+    ['Direct to', ac.directTo || '—'],
+    ['Fréquence', ac.frequency || '—'],
+    ['Statut', ac.status || '—'],
+  ].map(([k,v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+
+// ============================================================
+// INITIALISATION DEPUIS OPENSKY (situation de départ uniquement)
+// ============================================================
+document.getElementById('btn-init').addEventListener('click', initFromOpenSky);
+
+async function initFromOpenSky(){
+  const btn = document.getElementById('btn-init');
+  btn.disabled = true; btn.textContent = 'CHARGEMENT…';
+  try {
+    const url = `https://opensky-network.org/api/states/all?lamin=${BBOX.latMin}&lomin=${BBOX.lonMin}&lamax=${BBOX.latMax}&lomax=${BBOX.lonMax}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('OpenSky HTTP ' + res.status);
+    const data = await res.json();
+    const states = data.states || [];
+    console.log(`[OpenSky] ${states.length} appareils reçus dans la bbox.`);
+
+    const updates = {};
+    let count = 0;
+    states.forEach(s => {
+      // format OpenSky states/all: [icao24, callsign, origin_country, time_position, last_contact,
+      //   longitude, latitude, baro_altitude, on_ground, velocity, true_track, vertical_rate, ...]
+      const icao24 = s[0];
+      let callsign = (s[1] || '').trim();
+      const lon = s[5], lat = s[6], baroAlt = s[7], onGround = s[8], velocity = s[9], track = s[10], vrate = s[11];
+      if (!callsign) callsign = icao24.toUpperCase(); // avion sans callsign -> fallback ICAO24
+      if (lat == null || lon == null || onGround) return; // ignore incomplet / au sol
+
+      const altFt = baroAlt != null ? Math.round(baroAlt * 3.28084) : 0;
+      const speedKt = velocity != null ? Math.round(velocity * 1.94384) : 0;
+
+      const acRecord = {
+        callsign, icao24, type:'UNKNOWN', airline:'', origin:'', destination:'',
+        lat, lon, altitude:altFt, heading: track || 0, speed: speedKt, verticalRate: vrate ? Math.round(vrate*196.85) : 0,
+        assignedAltitude: altFt, assignedHeading: track || 0, assignedSpeed: speedKt, directTo:'',
+        frequency:'127.325', status:'enroute', emergency:'none',
+        pilotState:'idle', lastTransmission:'', lastTransmissionTime:0,
+        route:{}
+      };
+      updates['simulation/aircraft/' + callsign] = acRecord;
+      updates['simulation/strips/' + callsign] = {
+        callsign, aircraftType:'UNKNOWN', origin:'', destination:'',
+        currentAltitude:altFt, assignedAltitude:altFt,
+        currentHeading:track||0, assignedHeading:track||0,
+        currentSpeed:speedKt, assignedSpeed:speedKt,
+        directTo:'', freeText:'', remarks:'', emergency:'none',
+        lastClearance:'', lastClearanceTime:0
+      };
+      count++;
+    });
+
+    if (count === 0){
+      alert("Aucun avion en vol trouvé dans la zone via OpenSky pour l'instant (trafic faible ou API indisponible). Réessayez plus tard.");
+    } else {
+      await db.ref().update(updates);
+      console.log(`[Init] ${count} avions initialisés dans Firebase depuis OpenSky.`);
+    }
+  } catch (err) {
+    console.error('[OpenSky] Erreur récupération données:', err);
+    alert("Impossible de récupérer les données OpenSky depuis le navigateur (CORS ou rate limit probable). Voir console. Un proxy serveur minimal peut être nécessaire — voir README.");
+  } finally {
+    btn.disabled = false; btn.textContent = 'INIT DEPUIS OPENSKY';
+  }
+}
+
+// ---------- RESET ----------
+document.getElementById('btn-reset').addEventListener('click', async () => {
+  if (!confirm('Réinitialiser complètement la simulation (avions, strips, messages, événements) ?')) return;
+  await db.ref('simulation').set({ state:{ running:true, simulationTime:0, activeFrequency:'127.325', selectedAircraft:null } });
+});
+
+document.getElementById('btn-fullscreen').addEventListener('click', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+});
+
+// ============================================================
+// MOTEUR DE SIMULATION (MASTER LOCK)
+// Une seule page radar.html doit faire évoluer les avions.
+// Mécanisme simple: heartbeat toutes les 2s. Si le heartbeat est
+// périmé (>5s), une autre instance prend le rôle de master.
+// ============================================================
+const HEARTBEAT_MS = 2000;
+const HEARTBEAT_TIMEOUT = 5000;
+let engineTimer = null;
+
+async function tryBecomeMaster(){
+  const hbRef = db.ref('simulation/state/masterHeartbeat');
+  const snap = await hbRef.get();
+  const hb = snap.val();
+  const now = Date.now();
+  const stale = !hb || (now - hb.ts) > HEARTBEAT_TIMEOUT;
+  if (stale || hb.owner === instanceId) {
+    await hbRef.set({ owner: instanceId, ts: now });
+    if (!isMaster) console.log('[Engine] Cette page devient MASTER du moteur de simulation.');
+    isMaster = true;
+  } else {
+    isMaster = false;
+  }
+  document.getElementById('engine-status').textContent = 'moteur: ' + (isMaster ? 'MASTER (actif ici)' : 'suivi (actif ailleurs)');
+}
+setInterval(tryBecomeMaster, HEARTBEAT_MS);
+tryBecomeMaster();
+
+// Paramètres de dynamique de vol (approximatifs, réalistes pour skeleton)
+const TURN_RATE_DEG_S = 3;      // ~standard rate turn
+const CLIMB_RATE_FPS = 33;      // ~2000 ft/min
+const ACCEL_KT_S = 0.5;
+const TICK_S = 1;
+
+function step(ac){
+  // Cap: virage doux (smooth turn) vers assignedHeading
+  if (ac.assignedHeading != null) {
+    let diff = ((ac.assignedHeading - ac.heading + 540) % 360) - 180;
+    const maxStep = TURN_RATE_DEG_S * TICK_S;
+    if (Math.abs(diff) > 0.5) {
+      ac.heading = (ac.heading + Math.sign(diff) * Math.min(Math.abs(diff), maxStep) + 360) % 360;
+    }
+  }
+  // Altitude: montée/descente douce vers assignedAltitude
+  if (ac.assignedAltitude != null) {
+    const diff = ac.assignedAltitude - ac.altitude;
+    const maxStep = CLIMB_RATE_FPS * TICK_S;
+    if (Math.abs(diff) > 5) {
+      const delta = Math.sign(diff) * Math.min(Math.abs(diff), maxStep);
+      ac.altitude += delta;
+      ac.verticalRate = Math.sign(delta) * CLIMB_RATE_FPS * 60;
+    } else {
+      ac.verticalRate = 0;
+    }
+  }
+  // Vitesse: accélération douce vers assignedSpeed
+  if (ac.assignedSpeed != null) {
+    const diff = ac.assignedSpeed - ac.speed;
+    const maxStep = ACCEL_KT_S * TICK_S;
+    if (Math.abs(diff) > 0.5) ac.speed += Math.sign(diff) * Math.min(Math.abs(diff), maxStep);
+  }
+  // Déplacement selon cap + vitesse (approximation plane, correcte pour échelle régionale)
+  const distNm = (ac.speed || 0) * (TICK_S / 3600);
+  const rad = (ac.heading || 0) * Math.PI / 180;
+  const dLat = (distNm / 60) * Math.cos(rad);
+  const dLon = (distNm / 60) * Math.sin(rad) / Math.cos(ac.lat * Math.PI/180);
+  ac.lat += dLat;
+  ac.lon += dLon;
+  return ac;
+}
+
+async function engineTick(){
+  if (!isMaster) return;
+  const snap = await REF.aircraft.get();
+  const data = snap.val() || {};
+  const updates = {};
+  Object.keys(data).forEach(cs => {
+    const ac = step({ ...data[cs] });
+    updates[cs + '/lat'] = ac.lat;
+    updates[cs + '/lon'] = ac.lon;
+    updates[cs + '/heading'] = ac.heading;
+    updates[cs + '/altitude'] = ac.altitude;
+    updates[cs + '/speed'] = ac.speed;
+    updates[cs + '/verticalRate'] = ac.verticalRate;
+  });
+  if (Object.keys(updates).length) await REF.aircraft.update(updates);
+  await REF.state.child('simulationTime').transaction(t => (t || 0) + TICK_S);
+}
+setInterval(engineTick, TICK_S * 1000);
+
+// ============================================================
+// ÉVÉNEMENTS D'URGENCE (généré côté simulation, ~1x / heure simulée)
+// ============================================================
+const EMERGENCY_TYPES = [
+  { id:'mayday_engine', label:'MAYDAY — ENGINE FAILURE' },
+  { id:'panpan_medical', label:'PAN PAN — MEDICAL' },
+  { id:'mayday_fuel', label:'MAYDAY — FUEL EMERGENCY' },
+  { id:'panpan_weather', label:'PAN PAN — WEATHER DIVERSION' },
+  { id:'panpan_priority', label:'PAN PAN — PRIORITY LANDING REQUEST' },
+];
+const EMERGENCY_PROB_PER_TICK = 1 / 3600; // ~1x par heure simulée (tick = 1s)
+
+setInterval(async () => {
+  if (!isMaster) return;
+  if (Math.random() > EMERGENCY_PROB_PER_TICK) return;
+  const snap = await REF.aircraft.get();
+  const data = snap.val() || {};
+  const candidates = Object.keys(data).filter(cs => (data[cs].emergency||'none') === 'none');
+  if (!candidates.length) return;
+  const cs = candidates[Math.floor(Math.random() * candidates.length)];
+  const ev = EMERGENCY_TYPES[Math.floor(Math.random() * EMERGENCY_TYPES.length)];
+  await REF.aircraft.child(cs + '/emergency').set(ev.id);
+  await REF.strips.child(cs + '/emergency').set(ev.id);
+  await REF.events.child('activeEvent').set({ callsign: cs, type: ev.id, label: ev.label, ts: Date.now() });
+  const hist = REF.events.child('history').push();
+  await hist.set({ callsign: cs, type: ev.id, label: ev.label, ts: Date.now() });
+  console.log(`[Événement] ${ev.label} déclenché pour ${cs}`);
+}, TICK_S * 1000);
+
+// Etat initial de la simulation si absent
+REF.state.get().then(snap => {
+  if (!snap.exists()) {
+    REF.state.set({ running:true, simulationTime:0, activeFrequency:'127.325', selectedAircraft:null });
+  }
+});
+</script>
+</body>
+</html>
