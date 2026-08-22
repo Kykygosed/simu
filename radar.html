@@ -8,9 +8,9 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root{
-    --bg-deep:#03070c;
-    --bg-panel:#0a141f;
-    --bg-panel-alt:#0d1826;
+    --bg-deep:#050f1c;
+    --bg-panel:#0a1626;
+    --bg-panel-alt:#0d1e30;
     --border:#1b2c3d;
     --border-bright:#2a4258;
     --cyan:#5ad1ff;
@@ -41,14 +41,17 @@
   }
   #topbar button:hover{border-color:var(--cyan);}
   #topbar button.danger{color:var(--red);border-color:#5a2222;}
+  #topbar button.active-mode{background:var(--cyan);color:#00131c;border-color:var(--cyan);}
   #clock{color:var(--green);font-weight:600;}
   #status-dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim);display:inline-block;margin-right:6px;}
   #status-dot.master{background:var(--green);box-shadow:0 0 6px var(--green);}
 
   /* Main area */
   #main{flex:1;display:flex;min-height:0;}
-  #map{flex:1;background:#020408;}
-  .leaflet-container{background:#020408;}
+  #map{flex:1;background:#020610;}
+  .leaflet-container{background:#020610;}
+  /* Teinte "FlightAware" bleu nuit sur le fond de carte */
+  .leaflet-tile-pane{filter:brightness(0.85) saturate(1.6) hue-rotate(178deg) contrast(1.05);}
 
   /* Side panel: selected aircraft quick info */
   #side{
@@ -61,11 +64,12 @@
   .row .v{color:var(--text);font-weight:600;}
   .empty-hint{color:var(--text-dim);font-size:11px;line-height:1.5;}
   .emg-banner{background:#2a0a0a;border:1px solid var(--red);color:var(--red);padding:6px 8px;margin-bottom:10px;font-weight:700;font-size:11px;letter-spacing:.05em;}
+  .tod-banner{background:#20240a;border:1px solid var(--amber);color:var(--amber);padding:6px 8px;margin-bottom:10px;font-weight:700;font-size:11px;letter-spacing:.05em;}
 
   /* Aircraft marker */
   .ac-icon{position:relative;}
   .ac-glyph{
-    width:14px;height:14px;
+    width:15px;height:15px;
     transform-origin:center center;
   }
   .ac-label{
@@ -78,9 +82,18 @@
   .ac-icon.emergency .ac-glyph{filter:drop-shadow(0 0 4px var(--red));}
   .ac-icon.emergency .ac-label{color:var(--red);}
 
+  /* Points IFR */
+  .wpt-icon{position:relative;}
+  .wpt-glyph{width:10px;height:10px;}
+  .wpt-label{
+    position:absolute;left:10px;top:-4px;white-space:nowrap;font-size:9px;color:var(--cyan-dim);
+    text-shadow:0 0 3px #000;letter-spacing:.03em;pointer-events:none;
+  }
+  .apt-tooltip{background:transparent!important;border:none!important;box-shadow:none!important;color:var(--cyan)!important;font-family:var(--font);font-size:10px;}
+
   #footer{
     padding:4px 16px;background:var(--bg-panel);border-top:1px solid var(--border);
-    font-size:10px;color:var(--text-dim);display:flex;justify-content:space-between;
+    font-size:10px;color:var(--text-dim);display:flex;justify-content:space-between;gap:16px;
   }
 </style>
 </head>
@@ -89,12 +102,13 @@
   <div id="topbar">
     <div>
       <span class="title">RENNES ACC — RADAR</span>
-      <span class="sub">Bretagne / Ouest France</span>
+      <span class="sub">Bretagne / Ouest France — Trafic simulé</span>
     </div>
     <div class="right">
       <span><span id="status-dot"></span><span id="status-text" class="sub">connexion…</span></span>
       <span id="clock">--:--:--</span>
-      <button id="btn-init">INIT DEPUIS OPENSKY</button>
+      <button id="btn-spawn">SPAWN AVION (S)</button>
+      <button id="btn-waypoint">AJOUTER POINT IFR</button>
       <button id="btn-fullscreen">PLEIN ÉCRAN</button>
       <button id="btn-reset" class="danger">RESET SIMULATION</button>
     </div>
@@ -110,6 +124,7 @@
 
   <div id="footer">
     <span id="ac-count">0 avion(s) actif(s)</span>
+    <span id="next-spawn">prochain spawn auto: --:--</span>
     <span id="engine-status">moteur: inactif</span>
   </div>
 </div>
@@ -120,9 +135,24 @@
 <script>
 /* ============================================================
    RADAR.HTML — Écran radar principal du Centre
-   - Carte Leaflet centrée Bretagne / Ouest France
+   - Carte Leaflet centrée Bretagne / Ouest France, thème bleu nuit
+     façon FlightAware.
    - Synchronisation Firebase RTDB (source de vérité partagée)
-   - Initialisation du trafic depuis OpenSky (situation de départ uniquement)
+   - Trafic généré aléatoirement (plus d'ADS-B / OpenSky / proxy):
+       * 1 ou 2 avions toutes les 5 minutes (simulation en temps réel)
+       * spawn manuel immédiat en appuyant sur "S" ou via le bouton
+   - Avions "entrants": aéroport de départ hors de notre espace
+     (limites récupérées depuis les données VATSIM) → spawn à la
+     frontière, altitude cohérente avec la distance déjà parcourue,
+     avec un niveau de croisière assigné vers lequel ils montent.
+   - Avions "sortants": aéroport de départ dans notre espace → spawn
+     à 30NM du terrain, déjà au FL195, montée assignée vers un niveau
+     aléatoire entre FL200 et FL280.
+   - Points IFR plaçables sur la carte (clic), utilisés pour la route
+     des avions (navigation automatique jusqu'à ce qu'un cap soit
+     imposé par le contrôleur).
+   - Top of Descent calculé à partir de l'altitude de croisière et de
+     la distance à l'aéroport d'arrivée (règle des 3NM / 1000ft).
    - Moteur de simulation "master" (une seule instance radar.html doit
      faire tourner le moteur à la fois -> lock via heartbeat Firebase)
    ============================================================ */
@@ -145,48 +175,77 @@ const REF = {
   aircraft: db.ref('simulation/aircraft'),
   strips: db.ref('simulation/strips'),
   events: db.ref('simulation/events'),
+  waypoints: db.ref('simulation/waypoints'),
 };
 
-// ---------- PROXY OPENSKY (pour contourner le CORS) ----------
-// Remplace par l'URL Render de ton proxy une fois déployé, ex:
-// "https://opensky-proxy-xxxx.onrender.com"
-const OPENSKY_PROXY_URL = "https://simubackend.onrender.com";
-
 // ---------- CONSTANTES ZONE ----------
-// Bounding box Bretagne / Ouest France pour OpenSky
 const BBOX = { latMin: 46.8, latMax: 49.2, lonMin: -5.6, lonMax: -0.2 };
 const MAP_CENTER = [48.15, -2.6];
 
-// Aérodromes principaux affichés en repère
-const AIRPORTS = [
-  { code:'LFRN', name:'Rennes', lat:48.0695, lon:-1.7346 },
-  { code:'LFRB', name:'Brest', lat:48.4479, lon:-4.4185 },
-  { code:'LFRH', name:'Lorient', lat:47.7608, lon:-3.4400 },
-  { code:'LFRQ', name:'Quimper', lat:47.9749, lon:-4.1678 },
-  { code:'LFRS', name:'Nantes', lat:47.1532, lon:-1.6108 },
-  { code:'LFPG', name:'Paris CDG', lat:49.0097, lon:2.5479 },
+// Aérodromes "à nous" (départs/arrivées dans notre espace)
+const LOCAL_AIRPORTS = [
+  { code:'LFRN', name:'Rennes',  lat:48.0695, lon:-1.7346, elev:124 },
+  { code:'LFRB', name:'Brest',   lat:48.4479, lon:-4.4185, elev:325 },
+  { code:'LFRH', name:'Lorient', lat:47.7608, lon:-3.4400, elev:161 },
+  { code:'LFRQ', name:'Quimper', lat:47.9749, lon:-4.1678, elev:299 },
+  { code:'LFRS', name:'Nantes',  lat:47.1532, lon:-1.6108, elev:90  },
 ];
+// Aérodromes hors de notre espace (origine/destination du trafic entrant/sortant)
+const EXTERNAL_AIRPORTS = [
+  { code:'LFPG', name:'Paris CDG',        lat:49.0097, lon:2.5479,  elev:392 },
+  { code:'LFPO', name:'Paris Orly',       lat:48.7233, lon:2.3794,  elev:291 },
+  { code:'EGLL', name:'London Heathrow',  lat:51.4700, lon:-0.4543, elev:83  },
+  { code:'LEMD', name:'Madrid Barajas',   lat:40.4936, lon:-3.5668, elev:2001},
+  { code:'LPPT', name:'Lisbonne',         lat:38.7756, lon:-9.1354, elev:374 },
+  { code:'LFBD', name:'Bordeaux',         lat:44.8283, lon:-0.7156, elev:162 },
+  { code:'EINN', name:'Shannon',          lat:52.7019, lon:-8.9248, elev:46  },
+  { code:'EDDF', name:'Frankfurt',        lat:50.0379, lon:8.5622,  elev:364 },
+];
+const AIRPORTS = [...LOCAL_AIRPORTS, ...EXTERNAL_AIRPORTS];
+const ALL_AIRPORTS_BY_CODE = {};
+AIRPORTS.forEach(a => ALL_AIRPORTS_BY_CODE[a.code] = a);
+
+// Polygone de secours (approximatif) si les données VATSIM sont indisponibles
+const FALLBACK_POLYGON = [
+  [49.2,-5.6],[49.2,-3.0],[48.9,-1.2],[48.3,-0.2],[47.3,-0.2],
+  [46.8,-1.5],[46.8,-4.0],[47.3,-5.6],[49.2,-5.6]
+];
+let AIRSPACE_POLYGON = FALLBACK_POLYGON;
 
 // ---------- ÉTAT LOCAL ----------
 let aircraftData = {};      // miroir local de /simulation/aircraft
-let markers = {};           // callsign -> {marker, glyphEl, labelEl}
+let waypoints = {};         // miroir local de /simulation/waypoints
+let markers = {};           // callsign -> marker leaflet
+let waypointMarkers = {};   // nom -> marker leaflet
 let selectedCallsign = null;
 let isMaster = false;
+let placingWaypoint = false;
 const instanceId = 'radar-' + Math.random().toString(36).slice(2, 9);
 
 // ---------- CARTE ----------
 const map = L.map('map', { zoomControl:true, attributionControl:false }).setView(MAP_CENTER, 8);
 
-// Fond de carte sobre (CartoDB dark, lisible et professionnel)
+// Fond de carte sobre (CartoDB dark, filtré en bleu nuit façon FlightAware)
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 12, minZoom: 5
 }).addTo(map);
 
 AIRPORTS.forEach(ap => {
-  L.circleMarker([ap.lat, ap.lon], { radius:4, color:'#2f7fa3', weight:1, fillColor:'#5ad1ff', fillOpacity:0.6 })
+  const isLocal = LOCAL_AIRPORTS.some(a => a.code === ap.code);
+  L.circleMarker([ap.lat, ap.lon], {
+    radius: isLocal ? 5 : 3, color:'#2f7fa3', weight:1,
+    fillColor: isLocal ? '#5ad1ff' : '#3d5a70', fillOpacity: isLocal ? 0.8 : 0.5
+  })
     .addTo(map)
     .bindTooltip(ap.code, { permanent:true, direction:'right', className:'apt-tooltip', offset:[6,0] });
 });
+
+let airspaceLayer = null;
+function drawAirspaceBoundary(){
+  if (airspaceLayer) map.removeLayer(airspaceLayer);
+  airspaceLayer = L.polygon(AIRSPACE_POLYGON, { color:'#2f7fa3', weight:1.5, fill:false, dashArray:'4,5', opacity:0.8 }).addTo(map);
+}
+drawAirspaceBoundary();
 
 // ---------- HORLOGE ----------
 function tickClock(){
@@ -201,15 +260,173 @@ db.ref('.info/connected').on('value', snap => {
   document.getElementById('status-text').textContent = ok ? 'connecté' : 'reconnexion…';
 });
 
-// ---------- ICÔNE AVION (SVG triangle orienté) ----------
+// ============================================================
+// GÉOMÉTRIE (distances / caps / projections / polygone)
+// ============================================================
+function toRad(d){ return d * Math.PI / 180; }
+function toDeg(r){ return r * 180 / Math.PI; }
+
+function distanceNm(lat1, lon1, lat2, lon2){
+  const R = 3440.065;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function bearingDeg(lat1, lon1, lat2, lon2){
+  const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+function destPoint(lat, lon, brgDeg, distNm){
+  const R = 3440.065;
+  const brg = toRad(brgDeg);
+  const lat1 = toRad(lat), lon1 = toRad(lon);
+  const dR = distNm / R;
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dR) + Math.cos(lat1) * Math.sin(dR) * Math.cos(brg));
+  const lon2 = lon1 + Math.atan2(Math.sin(brg) * Math.sin(dR) * Math.cos(lat1), Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2));
+  return { lat: toDeg(lat2), lon: toDeg(lon2) };
+}
+function pointInPolygon(lat, lon, poly){
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++){
+    const yi = poly[i][0], xi = poly[i][1], yj = poly[j][0], xj = poly[j][1];
+    const intersect = ((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+function findBorderCrossing(lat1, lon1, lat2, lon2, poly){
+  const steps = 200;
+  for (let i = 1; i <= steps; i++){
+    const t = i / steps;
+    const lat = lat1 + (lat2 - lat1) * t;
+    const lon = lon1 + (lon2 - lon1) * t;
+    if (pointInPolygon(lat, lon, poly)) return { lat, lon, fraction: t };
+  }
+  return null;
+}
+function distanceFromSegmentNm(lat1, lon1, lat2, lon2, plat, plon){
+  const nmPerDegLon = 60 * Math.cos(toRad((lat1 + lat2) / 2));
+  const x1 = lon1 * nmPerDegLon, y1 = lat1 * 60;
+  const x2 = lon2 * nmPerDegLon, y2 = lat2 * 60;
+  const px = plon * nmPerDegLon, py = plat * 60;
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx*dx + dy*dy;
+  let t = len2 === 0 ? 0 : ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = x1 + t * dx, cy = y1 + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
+// ============================================================
+// LIMITES D'ESPACE AÉRIEN (VATSIM — FIR/UIR Rennes = LFRR)
+// ============================================================
+async function loadAirspaceBoundary(){
+  try {
+    const res = await fetch('https://raw.githubusercontent.com/vatsimnetwork/vatspy-data-project/main/Boundaries.geojson');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const geo = await res.json();
+    const feature = (geo.features || []).find(f => {
+      const p = f.properties || {};
+      return Object.values(p).some(v => typeof v === 'string' && v.toUpperCase() === 'LFRR');
+    });
+    if (feature && feature.geometry){
+      const geom = feature.geometry;
+      let ring = null;
+      if (geom.type === 'Polygon') ring = geom.coordinates[0];
+      else if (geom.type === 'MultiPolygon') ring = geom.coordinates.map(p => p[0]).sort((a,b) => b.length - a.length)[0];
+      if (ring && ring.length > 3){
+        AIRSPACE_POLYGON = ring.map(c => [c[1], c[0]]); // GeoJSON = [lon,lat] -> [lat,lon]
+        console.log(`[Airspace] Limites LFRR chargées depuis VATSIM (${AIRSPACE_POLYGON.length} points).`);
+        drawAirspaceBoundary();
+        return;
+      }
+    }
+    console.warn('[Airspace] LFRR introuvable dans les données VATSIM, polygone de secours conservé.');
+  } catch (err){
+    console.warn('[Airspace] échec de chargement VATSIM, polygone de secours conservé:', err.message);
+  }
+}
+loadAirspaceBoundary();
+
+// ============================================================
+// POINTS IFR
+// ============================================================
+const DEFAULT_WAYPOINTS = {
+  ANG:   { name:'ANG',   lat:47.478, lon:-0.612 },
+  TIPIK: { name:'TIPIK', lat:48.20,  lon:-2.95  },
+  BEDEK: { name:'BEDEK', lat:47.95,  lon:-1.35  },
+  RUSIL: { name:'RUSIL', lat:48.55,  lon:-3.55  },
+  LOSNI: { name:'LOSNI', lat:46.95,  lon:-1.95  },
+  GWENA: { name:'GWENA', lat:48.35,  lon:-4.05  },
+};
+REF.waypoints.get().then(snap => {
+  if (!snap.exists()) REF.waypoints.set(DEFAULT_WAYPOINTS);
+});
+function wptSvg(){
+  return `<svg class="wpt-glyph" viewBox="0 0 10 10"><polygon points="5,0 10,9 0,9" fill="#5ad1ff" stroke="#00131c" stroke-width="0.6"/></svg>`;
+}
+function renderWaypoints(){
+  const keys = Object.keys(waypoints);
+  keys.forEach(k => {
+    const w = waypoints[k];
+    if (w.lat == null || w.lon == null) return;
+    if (waypointMarkers[k]){
+      waypointMarkers[k].setLatLng([w.lat, w.lon]);
+    } else {
+      const icon = L.divIcon({
+        className: 'wpt-icon',
+        html: `${wptSvg()}<div class="wpt-label">${w.name}</div>`,
+        iconSize:[10,10], iconAnchor:[5,9]
+      });
+      waypointMarkers[k] = L.marker([w.lat, w.lon], { icon, zIndexOffset:-100 }).addTo(map);
+    }
+  });
+  Object.keys(waypointMarkers).forEach(k => {
+    if (!keys.includes(k)){ map.removeLayer(waypointMarkers[k]); delete waypointMarkers[k]; }
+  });
+}
+REF.waypoints.on('value', snap => { waypoints = snap.val() || {}; renderWaypoints(); });
+
+// Mode "placer un point IFR": clic sur la carte -> nom -> enregistrement Firebase
+document.getElementById('btn-waypoint').addEventListener('click', () => {
+  placingWaypoint = !placingWaypoint;
+  document.getElementById('btn-waypoint').classList.toggle('active-mode', placingWaypoint);
+  map.getContainer().style.cursor = placingWaypoint ? 'crosshair' : '';
+});
+map.on('click', (e) => {
+  if (!placingWaypoint) return;
+  const name = prompt('Nom du point IFR (ex: ANG, TIPIK) :');
+  placingWaypoint = false;
+  document.getElementById('btn-waypoint').classList.remove('active-mode');
+  map.getContainer().style.cursor = '';
+  if (!name) return;
+  const key = name.trim().toUpperCase();
+  if (!key) return;
+  REF.waypoints.child(key).set({ name:key, lat:e.latlng.lat, lon:e.latlng.lng });
+});
+
+function buildRoute(startLat, startLon, endLat, endLon){
+  const pts = Object.values(waypoints).map(w => ({
+    ...w, distToLine: distanceFromSegmentNm(startLat, startLon, endLat, endLon, w.lat, w.lon)
+  })).filter(w => w.distToLine < 35);
+  pts.sort((a, b) => distanceNm(startLat, startLon, a.lat, a.lon) - distanceNm(startLat, startLon, b.lat, b.lon));
+  const chosen = pts.slice(0, 2).map(w => ({ name: w.name, lat: w.lat, lon: w.lon }));
+  chosen.push({ name:'DEST', lat:endLat, lon:endLon });
+  return chosen;
+}
+
+// ---------- ICÔNE AVION (SVG silhouette façon FlightAware) ----------
 function acSvg(color){
-  return `<svg class="ac-glyph" viewBox="0 0 24 24"><polygon points="12,2 20,20 12,15 4,20" fill="${color}" stroke="#00131c" stroke-width="1"/></svg>`;
+  return `<svg class="ac-glyph" viewBox="0 0 32 32">
+    <path d="M16 1 L19 11 L30 17 L30 20 L19 17 L19 23 L24 26.5 L24 29 L16 27 L8 29 L8 26.5 L13 23 L13 17 L2 20 L2 17 L13 11 Z" fill="${color}" stroke="#00131c" stroke-width="1"/>
+  </svg>`;
 }
 
 function colorFor(ac){
   if (ac.emergency && ac.emergency !== 'none') return '#ff4d4d';
   if (selectedCallsign === ac.callsign) return '#ffffff';
-  return '#5ad1ff';
+  return '#e8f4ff';
 }
 
 function flLabel(ac){
@@ -222,7 +439,7 @@ function upsertMarker(cs, ac){
   const icon = L.divIcon({
     className: 'ac-icon' + (ac.emergency && ac.emergency !== 'none' ? ' emergency' : ''),
     html: `${acSvg(colorFor(ac))}<div class="ac-label ${selectedCallsign===cs?'selected':''}">${cs}<br><span class="fl">${flLabel(ac)}</span></div>`,
-    iconSize:[14,14], iconAnchor:[7,7]
+    iconSize:[15,15], iconAnchor:[7,7]
   });
 
   if (markers[cs]) {
@@ -265,7 +482,6 @@ function selectAircraft(cs){
 }
 REF.state.child('selectedAircraft').on('value', snap => {
   selectedCallsign = snap.val();
-  // re-render labels (mise en évidence)
   Object.keys(aircraftData).forEach(cs => upsertMarker(cs, aircraftData[cs]));
   renderSidePanel(aircraftData[selectedCallsign]);
 });
@@ -277,117 +493,174 @@ function renderSidePanel(ac){
     return;
   }
   const emg = ac.emergency && ac.emergency !== 'none';
-  el.innerHTML = (emg ? `<div class="emg-banner">⚠ ${ac.emergency.toUpperCase()}</div>` : '') + [
+  const nextWpt = (ac.route && ac.route[ac.routeIndex]) ? ac.route[ac.routeIndex].name : '—';
+  let todText = '—';
+  if (ac.todDistanceNm != null) todText = ac.todReached ? 'ATTEINT — clairance descente attendue' : (ac.todDistanceNm + ' NM avant ' + (ac.destination||'?'));
+  el.innerHTML = (emg ? `<div class="emg-banner">⚠ ${ac.emergency.toUpperCase()}</div>` : '')
+    + (!emg && ac.todReached ? `<div class="tod-banner">⏷ TOP OF DESCENT ATTEINT</div>` : '')
+    + [
     ['Callsign', ac.callsign || '—'],
     ['Type', ac.type || '—'],
     ['Origine → Dest.', (ac.origin||'?') + ' → ' + (ac.destination||'?')],
     ['Altitude', flLabel(ac) + '  (assignée ' + (ac.assignedAltitude ? 'FL'+Math.round(ac.assignedAltitude/100) : '—') + ')'],
-    ['Cap', Math.round(ac.heading||0)+'°  (assigné ' + (ac.assignedHeading ?? '—') + ')'],
+    ['Cap', Math.round(ac.heading||0)+'°  (assigné ' + (ac.assignedHeading ?? '—') + (ac.headingHold ? ', tenu' : ', nav. auto') + ')'],
     ['Vitesse', Math.round(ac.speed||0)+' kt (assignée ' + (ac.assignedSpeed ?? '—') + ')'],
     ['Vertical rate', Math.round(ac.verticalRate||0)+' ft/min'],
+    ['Phase', ac.phase || '—'],
+    ['Prochain point', nextWpt],
     ['Direct to', ac.directTo || '—'],
+    ['TOD', todText],
     ['Fréquence', ac.frequency || '—'],
     ['Statut', ac.status || '—'],
   ].map(([k,v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
 }
 
 // ============================================================
-// INITIALISATION DEPUIS OPENSKY (situation de départ uniquement)
+// GÉNÉRATION DE TRAFIC ALÉATOIRE
 // ============================================================
-document.getElementById('btn-init').addEventListener('click', initFromOpenSky);
+const AIRLINES = ['AFR','EZY','RYR','BAW','DLH','TAP','IBE','TVF','VLG','WZZ','TOM','SAS'];
+const AC_TYPES = ['A320','A321','A319','A21N','B738','B739','E190','ATR72'];
 
-async function fetchOpenSkyStates(){
-  const openskyPath = `states/all?lamin=${BBOX.latMin}&lomin=${BBOX.lonMin}&lamax=${BBOX.latMax}&lomax=${BBOX.lonMax}`;
-  const directUrl = `https://opensky-network.org/api/${openskyPath}`;
+function randomInt(min, max){ return Math.floor(Math.random() * (max - min + 1)) + min; }
+function randomChoice(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
 
-  // Plusieurs sources tentées dans l'ordre — la première qui répond gagne.
-  // Utile tant qu'on n'a pas identifié une source stable (Render et Cloudflare
-  // Workers ont tous les deux été bloqués/rejetés par OpenSky pour l'instant).
-  const sources = [];
-  if (!OPENSKY_PROXY_URL.includes('REPLACE-WITH-YOUR-RENDER-URL')) {
-    sources.push({ name: 'proxy personnel (Render)', url: `${OPENSKY_PROXY_URL}/opensky/${openskyPath}` });
-  }
-  sources.push({ name: 'corsproxy.io', url: `https://corsproxy.io/?url=${encodeURIComponent(directUrl)}` });
-  sources.push({ name: 'allorigins.win', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}` });
-  sources.push({ name: 'direct (sans proxy)', url: directUrl });
-
-  const errors = [];
-  for (const src of sources) {
-    try {
-      console.log(`[OpenSky] tentative via ${src.name}…`);
-      const res = await fetch(src.url);
-      if (!res.ok) { errors.push(`${src.name}: HTTP ${res.status}`); continue; }
-      const data = await res.json();
-      if (!data || !Array.isArray(data.states)) { errors.push(`${src.name}: réponse inattendue`); continue; }
-      console.log(`[OpenSky] succès via ${src.name}.`);
-      return data;
-    } catch (err) {
-      errors.push(`${src.name}: ${err.message}`);
-    }
-  }
-  throw new Error('Toutes les sources ont échoué — ' + errors.join(' | '));
+function generateCallsign(){
+  let cs, tries = 0;
+  do {
+    cs = randomChoice(AIRLINES) + randomInt(100, 999);
+    tries++;
+  } while (aircraftData[cs] && tries < 20);
+  return cs;
 }
 
-async function initFromOpenSky(){
-  const btn = document.getElementById('btn-init');
-  btn.disabled = true; btn.textContent = 'CHARGEMENT…';
-  try {
-    const data = await fetchOpenSkyStates();
-    const states = data.states || [];
-    console.log(`[OpenSky] ${states.length} appareils reçus dans la bbox.`);
+function buildEnteringAircraft(){
+  const dep = randomChoice(EXTERNAL_AIRPORTS);
+  const toLocal = Math.random() < 0.7;
+  const destPool = toLocal ? LOCAL_AIRPORTS : EXTERNAL_AIRPORTS.filter(a => a.code !== dep.code);
+  const dest = randomChoice(destPool);
+  if (!dest || dest.code === dep.code) return null;
 
-    const updates = {};
-    let count = 0;
-    states.forEach(s => {
-      // format OpenSky states/all: [icao24, callsign, origin_country, time_position, last_contact,
-      //   longitude, latitude, baro_altitude, on_ground, velocity, true_track, vertical_rate, ...]
-      const icao24 = s[0];
-      let callsign = (s[1] || '').trim();
-      const lon = s[5], lat = s[6], baroAlt = s[7], onGround = s[8], velocity = s[9], track = s[10], vrate = s[11];
-      if (!callsign) callsign = icao24.toUpperCase(); // avion sans callsign -> fallback ICAO24
-      if (lat == null || lon == null || onGround) return; // ignore incomplet / au sol
+  const crossing = findBorderCrossing(dep.lat, dep.lon, dest.lat, dest.lon, AIRSPACE_POLYGON);
+  if (!crossing) return null;
 
-      const altFt = baroAlt != null ? Math.round(baroAlt * 3.28084) : 0;
-      const speedKt = velocity != null ? Math.round(velocity * 1.94384) : 0;
+  const totalDist = distanceNm(dep.lat, dep.lon, dest.lat, dest.lon);
+  const distFromDep = distanceNm(dep.lat, dep.lon, crossing.lat, crossing.lon);
 
-      const acRecord = {
-        callsign, icao24, type:'UNKNOWN', airline:'', origin:'', destination:'',
-        lat, lon, altitude:altFt, heading: track || 0, speed: speedKt, verticalRate: vrate ? Math.round(vrate*196.85) : 0,
-        assignedAltitude: altFt, assignedHeading: track || 0, assignedSpeed: speedKt, directTo:'',
-        frequency:'127.325', status:'enroute', emergency:'none',
-        pilotState:'idle', lastTransmission:'', lastTransmissionTime:0,
-        route:{}
-      };
-      updates['simulation/aircraft/' + callsign] = acRecord;
-      updates['simulation/strips/' + callsign] = {
-        callsign, aircraftType:'UNKNOWN', origin:'', destination:'',
-        currentAltitude:altFt, assignedAltitude:altFt,
-        currentHeading:track||0, assignedHeading:track||0,
-        currentSpeed:speedKt, assignedSpeed:speedKt,
-        directTo:'', freeText:'', remarks:'', emergency:'none',
-        lastClearance:'', lastClearanceTime:0
-      };
-      count++;
-    });
+  let cruiseAlt;
+  if (totalDist < 150) cruiseAlt = randomInt(20, 28) * 1000;
+  else if (totalDist < 400) cruiseAlt = randomInt(28, 37) * 1000;
+  else cruiseAlt = randomInt(33, 41) * 1000;
 
-    if (count === 0){
-      alert("Aucun avion en vol trouvé dans la zone via OpenSky pour l'instant (trafic faible ou API indisponible). Réessayez plus tard.");
-    } else {
-      await db.ref().update(updates);
-      console.log(`[Init] ${count} avions initialisés dans Firebase depuis OpenSky.`);
-    }
-  } catch (err) {
-    console.error('[OpenSky] Erreur récupération données:', err);
-    alert("Impossible de récupérer les données via le proxy OpenSky. Vérifie que le service Render est bien démarré (les instances gratuites s'endorment après inactivité, le premier appel peut prendre ~30s) et que OPENSKY_PROXY_URL est correcte. Voir console pour le détail.");
-  } finally {
-    btn.disabled = false; btn.textContent = 'INIT DEPUIS OPENSKY';
-  }
+  // Altitude cohérente avec la distance déjà parcourue depuis le départ (règle ~3NM / 1000ft en montée)
+  const climbFt = distFromDep * (1000 / 3);
+  let altAtEntry = Math.min(cruiseAlt, Math.round(climbFt / 500) * 500);
+  altAtEntry = Math.max(altAtEntry, 2000);
+  const phase = altAtEntry < cruiseAlt - 500 ? 'climb' : 'cruise';
+
+  const route = buildRoute(crossing.lat, crossing.lon, dest.lat, dest.lon);
+  const heading = bearingDeg(crossing.lat, crossing.lon, route[0].lat, route[0].lon);
+  const callsign = generateCallsign();
+  const destIsLocal = LOCAL_AIRPORTS.some(a => a.code === dest.code);
+  const todDistanceNm = destIsLocal ? Math.round((cruiseAlt - dest.elev) / 1000 * 3) + 5 : null;
+
+  return {
+    callsign, icao24: callsign.toLowerCase(), type: randomChoice(AC_TYPES), airline:'',
+    origin: dep.code, destination: dest.code,
+    lat: crossing.lat, lon: crossing.lon, altitude: altAtEntry, heading, speed: 260 + randomInt(-20, 20),
+    verticalRate: phase === 'climb' ? 1800 : 0,
+    assignedAltitude: cruiseAlt, assignedHeading: heading, assignedSpeed: 280, directTo:'',
+    frequency:'127.325', status: phase === 'climb' ? 'climbing' : 'enroute', emergency:'none',
+    pilotState:'idle', lastTransmission:'', lastTransmissionTime:0,
+    cruiseAltitude: cruiseAlt, phase, route, routeIndex:0, headingHold:false,
+    todDistanceNm, todReached:false, spawnType:'entering'
+  };
 }
 
-// ---------- RESET ----------
+function buildDepartingAircraft(){
+  const dep = randomChoice(LOCAL_AIRPORTS);
+  const toExternal = Math.random() < 0.7;
+  const destPool = toExternal ? EXTERNAL_AIRPORTS : LOCAL_AIRPORTS.filter(a => a.code !== dep.code);
+  const dest = randomChoice(destPool);
+  if (!dest || dest.code === dep.code) return null;
+
+  const route = buildRoute(dep.lat, dep.lon, dest.lat, dest.lon);
+  const initialBrg = bearingDeg(dep.lat, dep.lon, route[0].lat, route[0].lon);
+  const spawnPt = destPoint(dep.lat, dep.lon, initialBrg, 30); // spawn à 30NM du terrain de départ
+
+  const cruiseAlt = randomInt(20, 28) * 1000; // FL195 -> montée assignée entre FL200 et FL280
+  const callsign = generateCallsign();
+  const destIsLocal = LOCAL_AIRPORTS.some(a => a.code === dest.code);
+  const todDistanceNm = destIsLocal ? Math.round((cruiseAlt - dest.elev) / 1000 * 3) + 5 : null;
+
+  return {
+    callsign, icao24: callsign.toLowerCase(), type: randomChoice(AC_TYPES), airline:'',
+    origin: dep.code, destination: dest.code,
+    lat: spawnPt.lat, lon: spawnPt.lon, altitude: 19500, heading: initialBrg, speed: 250,
+    verticalRate: 1800,
+    assignedAltitude: cruiseAlt, assignedHeading: initialBrg, assignedSpeed: 280, directTo:'',
+    frequency:'127.325', status:'climbing', emergency:'none',
+    pilotState:'idle', lastTransmission:'', lastTransmissionTime:0,
+    cruiseAltitude: cruiseAlt, phase:'climb', route, routeIndex:0, headingHold:false,
+    todDistanceNm, todReached:false, spawnType:'departing'
+  };
+}
+
+async function spawnAircraft(){
+  const kind = Math.random() < 0.55 ? 'entering' : 'departing';
+  let record = kind === 'entering' ? buildEnteringAircraft() : buildDepartingAircraft();
+  let tries = 0;
+  while (!record && tries < 6){
+    record = (Math.random() < 0.5) ? buildEnteringAircraft() : buildDepartingAircraft();
+    tries++;
+  }
+  if (!record){ console.warn('[Spawn] échec de génération après plusieurs tentatives.'); return; }
+
+  const updates = {};
+  updates['simulation/aircraft/' + record.callsign] = record;
+  updates['simulation/strips/' + record.callsign] = {
+    callsign: record.callsign, aircraftType: record.type, origin: record.origin, destination: record.destination,
+    currentAltitude: record.altitude, assignedAltitude: record.assignedAltitude,
+    currentHeading: record.heading, assignedHeading: record.assignedHeading,
+    currentSpeed: record.speed, assignedSpeed: record.assignedSpeed,
+    directTo:'', freeText:'', remarks:'', emergency:'none',
+    lastClearance:'', lastClearanceTime:0
+  };
+  await db.ref().update(updates);
+  console.log(`[Spawn] ${record.callsign} (${record.spawnType}) ${record.origin}→${record.destination}, FL${Math.round(record.altitude/100)}→FL${Math.round(record.assignedAltitude/100)}`);
+}
+
+document.getElementById('btn-spawn').addEventListener('click', () => spawnAircraft());
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  if (e.key !== 's' && e.key !== 'S') return;
+  const tag = document.activeElement ? document.activeElement.tagName : '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  spawnAircraft();
+});
+
+// Spawn automatique: 1 ou 2 avions toutes les 5 minutes (piloté par le master)
+const AUTO_SPAWN_MS = 5 * 60 * 1000;
+let nextAutoSpawnAt = Date.now() + AUTO_SPAWN_MS;
+setInterval(() => {
+  if (isMaster && Date.now() >= nextAutoSpawnAt){
+    const n = Math.random() < 0.5 ? 1 : 2;
+    for (let i = 0; i < n; i++) spawnAircraft();
+    nextAutoSpawnAt = Date.now() + AUTO_SPAWN_MS;
+  }
+  const remain = Math.max(0, nextAutoSpawnAt - Date.now());
+  const mm = String(Math.floor(remain/60000)).padStart(2,'0');
+  const ss = String(Math.floor((remain%60000)/1000)).padStart(2,'0');
+  document.getElementById('next-spawn').textContent = 'prochain spawn auto: ' + mm + ':' + ss;
+}, 1000);
+
+// ---------- RESET (les points IFR sont conservés) ----------
 document.getElementById('btn-reset').addEventListener('click', async () => {
-  if (!confirm('Réinitialiser complètement la simulation (avions, strips, messages, événements) ?')) return;
-  await db.ref('simulation').set({ state:{ running:true, simulationTime:0, activeFrequency:'127.325', selectedAircraft:null } });
+  if (!confirm('Réinitialiser complètement la simulation (avions, strips, messages, événements) ? Les points IFR sont conservés.')) return;
+  await REF.aircraft.remove();
+  await REF.strips.remove();
+  await REF.events.remove();
+  await REF.state.set({ running:true, simulationTime:0, activeFrequency:'127.325', selectedAircraft:null });
+  nextAutoSpawnAt = Date.now() + AUTO_SPAWN_MS;
 });
 
 document.getElementById('btn-fullscreen').addEventListener('click', () => {
@@ -397,13 +670,9 @@ document.getElementById('btn-fullscreen').addEventListener('click', () => {
 
 // ============================================================
 // MOTEUR DE SIMULATION (MASTER LOCK)
-// Une seule page radar.html doit faire évoluer les avions.
-// Mécanisme simple: heartbeat toutes les 2s. Si le heartbeat est
-// périmé (>5s), une autre instance prend le rôle de master.
 // ============================================================
 const HEARTBEAT_MS = 2000;
 const HEARTBEAT_TIMEOUT = 5000;
-let engineTimer = null;
 
 async function tryBecomeMaster(){
   const hbRef = db.ref('simulation/state/masterHeartbeat');
@@ -430,6 +699,17 @@ const ACCEL_KT_S = 0.5;
 const TICK_S = 1;
 
 function step(ac){
+  // Navigation automatique le long de la route tant que le contrôleur ne tient pas un cap
+  if (!ac.headingHold && Array.isArray(ac.route) && ac.route.length){
+    if (ac.routeIndex == null) ac.routeIndex = 0;
+    if (ac.routeIndex < ac.route.length){
+      const target = ac.route[ac.routeIndex];
+      if (distanceNm(ac.lat, ac.lon, target.lat, target.lon) < 2) ac.routeIndex++;
+      const next = ac.route[Math.min(ac.routeIndex, ac.route.length - 1)];
+      ac.assignedHeading = bearingDeg(ac.lat, ac.lon, next.lat, next.lon);
+    }
+  }
+
   // Cap: virage doux (smooth turn) vers assignedHeading
   if (ac.assignedHeading != null) {
     let diff = ((ac.assignedHeading - ac.heading + 540) % 360) - 180;
@@ -463,6 +743,22 @@ function step(ac){
   const dLon = (distNm / 60) * Math.sin(rad) / Math.cos(ac.lat * Math.PI/180);
   ac.lat += dLat;
   ac.lon += dLon;
+
+  // Phase de vol
+  if (ac.cruiseAltitude != null){
+    if (ac.assignedAltitude < ac.cruiseAltitude - 500) ac.phase = 'descent';
+    else if (Math.abs(ac.altitude - ac.assignedAltitude) < 300) ac.phase = 'cruise';
+    else if (ac.altitude < ac.assignedAltitude) ac.phase = 'climb';
+  }
+
+  // Détection du Top of Descent (règle des 3NM par 1000ft + marge)
+  if (ac.todDistanceNm != null && !ac.todReached && ac.phase !== 'descent'){
+    const destApt = ALL_AIRPORTS_BY_CODE[ac.destination];
+    if (destApt){
+      const distToDest = distanceNm(ac.lat, ac.lon, destApt.lat, destApt.lon);
+      if (distToDest <= ac.todDistanceNm) ac.todReached = true;
+    }
+  }
   return ac;
 }
 
@@ -471,16 +767,44 @@ async function engineTick(){
   const snap = await REF.aircraft.get();
   const data = snap.val() || {};
   const updates = {};
+  const removals = [];
+
   Object.keys(data).forEach(cs => {
     const ac = step({ ...data[cs] });
+
+    // Suppression: avion arrivé à destination, ou sorti de la couverture radar
+    let remove = false;
+    const destApt = ALL_AIRPORTS_BY_CODE[ac.destination];
+    if (destApt){
+      const isLocalDest = LOCAL_AIRPORTS.some(a => a.code === destApt.code);
+      const distToDest = distanceNm(ac.lat, ac.lon, destApt.lat, destApt.lon);
+      if (isLocalDest && distToDest < 3 && ac.altitude < destApt.elev + 2500) remove = true;      // atterrissage
+      if (!isLocalDest && distToDest < 5) remove = true;                                          // sortie vers un aéroport externe
+    }
+    if (!remove){
+      const outOfCoverage = ac.lat < BBOX.latMin - 1.2 || ac.lat > BBOX.latMax + 1.2 || ac.lon < BBOX.lonMin - 1.5 || ac.lon > BBOX.lonMax + 1.5;
+      if (outOfCoverage) remove = true;
+    }
+    if (remove){ removals.push(cs); return; }
+
     updates[cs + '/lat'] = ac.lat;
     updates[cs + '/lon'] = ac.lon;
     updates[cs + '/heading'] = ac.heading;
+    updates[cs + '/assignedHeading'] = ac.assignedHeading;
     updates[cs + '/altitude'] = ac.altitude;
     updates[cs + '/speed'] = ac.speed;
     updates[cs + '/verticalRate'] = ac.verticalRate;
+    updates[cs + '/routeIndex'] = ac.routeIndex ?? 0;
+    updates[cs + '/phase'] = ac.phase;
+    updates[cs + '/todReached'] = !!ac.todReached;
   });
+
   if (Object.keys(updates).length) await REF.aircraft.update(updates);
+  for (const cs of removals){
+    await REF.aircraft.child(cs).remove();
+    await REF.strips.child(cs).remove();
+    console.log(`[Engine] ${cs} retiré (arrivé à destination / hors couverture).`);
+  }
   await REF.state.child('simulationTime').transaction(t => (t || 0) + TICK_S);
 }
 setInterval(engineTick, TICK_S * 1000);
